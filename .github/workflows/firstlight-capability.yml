@@ -1,0 +1,72 @@
+name: FirstLight capability only
+on:
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: firstlight-capability-only
+  cancel-in-progress: false
+jobs:
+  capability:
+    if: github.event_name == 'workflow_dispatch' && github.event.repository.private == false && github.repository_owner == 'THEFLOLZX'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Read bounded public machine capabilities only
+        shell: bash --noprofile --norc -euo pipefail {0}
+        run: |
+          timeout --signal=TERM --kill-after=1s 100s python3 -I -B - <<'PY'
+          import os, platform, json
+          if platform.system() != "Linux":
+              raise SystemExit("Linux hosted runner required")
+          if os.geteuid() == 0:
+              print(json.dumps({"blocked": "root execution", "effective_uid": 0}))
+              raise SystemExit(1)
+          """Our stdlib-only Linux metadata probe; no shell, network or install calls.
+
+          Not run on the Windows PC. A cloud task would need separate launch permission.
+          Does not read environment variables, home files, credentials or device contents.
+          It checks existence of device paths but never opens/uses them.
+          """
+          import json
+          import os
+          from pathlib import Path
+          import platform
+          import shutil
+
+          def bounded_integer(path):
+              try:
+                  text=Path(path).read_text(encoding='ascii')[:128].strip()
+                  return int(text) if text.isdecimal() else None
+              except (OSError,ValueError):return None
+
+          def memory_bytes(text):
+              for line in text.splitlines():
+                  parts=line.split()
+                  if parts and parts[0]=='MemAvailable:' and len(parts)==3 and parts[1].isdecimal() and parts[2]=='kB':return int(parts[1])*1024
+              return None
+
+          def probe():
+              if platform.system()!='Linux':raise RuntimeError('Cloud-only Linux probe: refusing the Windows host')
+              try:mem=memory_bytes(Path('/proc/meminfo').read_text(encoding='ascii')[:8192])
+              except OSError:mem=None
+              cgroup_limit=bounded_integer('/sys/fs/cgroup/memory.max')
+              cgroup_used=bounded_integer('/sys/fs/cgroup/memory.current')
+              if cgroup_limit is not None and cgroup_used is not None:
+                  mem=min(mem or cgroup_limit,max(0,cgroup_limit-cgroup_used))
+              count=len(os.sched_getaffinity(0)) if hasattr(os,'sched_getaffinity') else os.cpu_count()
+              return dict(schema='firstlight-cloud-capability.v1',os=platform.system(),architecture=platform.machine(),
+                  python=platform.python_version(),cpu_count=count,available_memory_bytes=mem,
+                  free_disk_bytes=shutil.disk_usage('.').free,effective_uid=os.geteuid(),
+                  kvm_device_present=Path('/dev/kvm').exists(),render_device_directory_present=Path('/dev/dri').is_dir(),
+                  gpu_verified=False,android_runtime_verified=False,network_isolation_verified=False,
+                  personal_mounts_verified_absent=False,provider_identity_verified=False,
+                  credentials_read=False,network_connections=0,subprocesses=0,installations=0,device_contents_read=False,
+                  warning='Host totals/affinity may differ from enforceable container quotas; configuration and independent evidence still required')
+
+          if __name__=='__main__':print(json.dumps(probe(),indent=2))
+
+          print(json.dumps({"inspection_tool_presence_only": {
+              "apksigner_36_1_0": Path("/usr/local/lib/android/sdk/build-tools/36.1.0/apksigner").is_file(),
+              "aapt2_36_1_0": Path("/usr/local/lib/android/sdk/build-tools/36.1.0/aapt2").is_file(),
+              "tool_hashes_verified": False, "tools_executed": False}}))
+          PY
