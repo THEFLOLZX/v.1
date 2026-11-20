@@ -1,0 +1,151 @@
+name: FirstLight single APK static intake
+on:
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: firstlight-single-apk-static-intake
+  cancel-in-progress: false
+jobs:
+  static-intake:
+    if: github.event_name == 'workflow_dispatch' && github.run_number == 1 && github.run_attempt == 1 && github.repository == 'THEFLOLZX/v.1' && github.event.repository.private == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: One approved transfer and read-only static inspection
+        shell: bash --noprofile --norc -euo pipefail {0}
+        run: |
+          timeout --signal=TERM --kill-after=1s 330s python3 -I -B - <<'PY'
+          INSPECTOR_PIN = '738305850976adf79c091291b32fbd4f83a3f8562c4d3ef0f1d6170119f42339'
+          INSPECTOR_BASE64 = 'IiIiT3VyIGJvdW5kZWQgUkVBRC1PTkxZIFpJUC9zaWduaW5nLWJsb2NrIGludmVudG9yeS4gTm8gZXh0cmFjdGlvbi9leGVjdXRpb24uCgpDTEkgcmVmdXNlcyBub24tTGludXggaG9zdHM7IExpbnV4IGFsb25lIGRvZXMgbm90IHByb3ZlIGNsb3VkIGlzb2xhdGlvbi4KUmVhbCBBUEsgaW50YWtlIHN0aWxsIHJlcXVpcmVzIHJlc291cmNlIGFwcHJvdmFsCmFuZCByZXZpZXdlZCBjbG91ZCBpc29sYXRpb24uIFRlc3RzIHVzZSBvbmx5IG91ciBzeW50aGV0aWMgWklQIGJ5dGVzLgpUaGlzIGlzIG5vdCBhbiBBUEsgY3J5cHRvZ3JhcGhpYyBzaWduYXR1cmUgdmVyaWZpZXIgb3IgYW4gQW5kcm9pZCBtYW5pZmVzdCBkZWNvZGVyLgoiIiIKaW1wb3J0IGhhc2hsaWIKaW1wb3J0IGlvCmltcG9ydCBqc29uCmZyb20gcGF0aGxpYiBpbXBvcnQgUHVyZVBvc2l4UGF0aCxQYXRoCmltcG9ydCBwbGF0Zm9ybQppbXBvcnQgc3RhdAppbXBvcnQgc3RydWN0CmltcG9ydCB6aXBmaWxlCmltcG9ydCB6bGliCgpNQVhfQVJDSElWRT0xXzAwMF8wMDBfMDAwCk1BWF9NRU1CRVI9NTEyXzAwMF8wMDAKTUFYX1RPVEFMPTJfMDAwXzAwMF8wMDAKTUFYX0VOVFJJRVM9MjAwMDAKTUFYX0JMT0NLPThfMDAwXzAwMAoKZGVmIGZvcm1hdF9oZWFkZXIobmFtZSxwcmVmaXgsc2l6ZSwqLGRleF9hZGxlcj1Ob25lLGRleF9zaGExPU5vbmUpOgogICAgIiIiQm91bmRlZCBoZWFkZXIgZmFjdHMgb25seS4gTm8gY29kZSwgRUxGIGxvYWRlciBvciBERVggZXhlY3V0aW9uLiIiIgogICAgaWYgbmFtZS5lbmRzd2l0aCgnLnNvJyk6CiAgICAgICAgdmFsaWQ9bGVuKHByZWZpeCk+PTY0IGFuZCBwcmVmaXhbOjRdPT1iJ1x4N2ZFTEYnIGFuZCBwcmVmaXhbNDo3XT09Ynl0ZXMoKDIsMSwxKSkKICAgICAgICBtYWNoaW5lPXN0cnVjdC51bnBhY2tfZnJvbSgnPEgnLHByZWZpeCwxOClbMF0gaWYgdmFsaWQgZWxzZSBOb25lCiAgICAgICAgZWxmX3R5cGU9c3RydWN0LnVucGFja19mcm9tKCc8SCcscHJlZml4LDE2KVswXSBpZiB2YWxpZCBlbHNlIE5vbmUKICAgICAgICByZXR1cm4gZGljdChmb3JtYXQ9J0VMRi1oZWFkZXInLGVsZjY0X2xpdHRsZV9lbmRpYW49dmFsaWQsbWFjaGluZT1tYWNoaW5lLAogICAgICAgICAgICBhYXJjaDY0PXZhbGlkIGFuZCBtYWNoaW5lPT0xODMsc2hhcmVkX29iamVjdD12YWxpZCBhbmQgZWxmX3R5cGU9PTMsCiAgICAgICAgICAgIGV4cGVjdGVkX2FybTY0X3BhdGg9bmFtZS5zdGFydHN3aXRoKCdsaWIvYXJtNjQtdjhhLycpLGJ1aWxkX2lkX3ZlcmlmaWVkPUZhbHNlKQogICAgaWYgbmFtZS5lbmRzd2l0aCgnLmRleCcpOgogICAgICAgIHZhbGlkPWxlbihwcmVmaXgpPj0xMTIgYW5kIHByZWZpeFs6NF09PWInZGV4XG4nIGFuZCBwcmVmaXhbNDo3XS5pc2RpZ2l0KCkgYW5kIHByZWZpeFs3XT09MAogICAgICAgIGxlbmd0aD1zdHJ1Y3QudW5wYWNrX2Zyb20oJzxJJyxwcmVmaXgsMzIpWzBdIGlmIHZhbGlkIGVsc2UgTm9uZQogICAgICAgIGhlYWRlcl9zaXplPXN0cnVjdC51bnBhY2tfZnJvbSgnPEknLHByZWZpeCwzNilbMF0gaWYgdmFsaWQgZWxzZSBOb25lCiAgICAgICAgZW5kaWFuPXN0cnVjdC51bnBhY2tfZnJvbSgnPEknLHByZWZpeCw0MClbMF0gaWYgdmFsaWQgZWxzZSBOb25lCiAgICAgICAgcmV0dXJuIGRpY3QoZm9ybWF0PSdERVgtaGVhZGVyJyxtYWdpY192YWxpZD12YWxpZCwKICAgICAgICAgICAgdmVyc2lvbj1wcmVmaXhbNDo3XS5kZWNvZGUoJ2FzY2lpJykgaWYgdmFsaWQgZWxzZSBOb25lLAogICAgICAgICAgICBmaWxlX3NpemVfbWF0Y2hlcz12YWxpZCBhbmQgbGVuZ3RoPT1zaXplLAogICAgICAgICAgICBzdXBwb3J0ZWRfaGVhZGVyPXZhbGlkIGFuZCBoZWFkZXJfc2l6ZT09MTEyIGFuZCBlbmRpYW49PTB4MTIzNDU2NzgsCiAgICAgICAgICAgIGNoZWNrc3VtX21hdGNoZXM9dmFsaWQgYW5kIHN0cnVjdC51bnBhY2tfZnJvbSgnPEknLHByZWZpeCw4KVswXT09ZGV4X2FkbGVyLAogICAgICAgICAgICBzaWduYXR1cmVfc2hhMV9tYXRjaGVzPXZhbGlkIGFuZCBwcmVmaXhbMTI6MzJdLmhleCgpPT1kZXhfc2hhMSwKICAgICAgICAgICAgY29kZV9leGVjdXRlZD1GYWxzZSkKICAgIHJldHVybiBOb25lCgpkZWYgc2lnbmluZ19ibG9jayhzdHJlYW0sY2VudHJhbF9vZmZzZXQpOgogICAgaWYgY2VudHJhbF9vZmZzZXQ8MjQ6cmV0dXJuIGRpY3QocHJlc2VudD1GYWxzZSxjcnlwdG9ncmFwaGljYWxseV92ZXJpZmllZD1GYWxzZSkKICAgIHN0cmVhbS5zZWVrKGNlbnRyYWxfb2Zmc2V0LTI0KTtmb290ZXI9c3RyZWFtLnJlYWQoMjQpCiAgICBpZiBmb290ZXJbODpdIT1iJ0FQSyBTaWcgQmxvY2sgNDInOnJldHVybiBkaWN0KHByZXNlbnQ9RmFsc2UsY3J5cHRvZ3JhcGhpY2FsbHlfdmVyaWZpZWQ9RmFsc2UpCiAgICBzaXplPXN0cnVjdC51bnBhY2soJzxRJyxmb290ZXJbOjhdKVswXQogICAgaWYgbm90IDI0PD1zaXplPD1NQVhfQkxPQ0sgb3Igc2l6ZSs4PmNlbnRyYWxfb2Zmc2V0OnJhaXNlIFZhbHVlRXJyb3IoJ0ludmFsaWQgYm91bmRlZCBBUEsgc2lnbmluZyBibG9jaycpCiAgICBzdGFydD1jZW50cmFsX29mZnNldC1zaXplLTg7c3RyZWFtLnNlZWsoc3RhcnQpCiAgICBpZiBzdHJ1Y3QudW5wYWNrKCc8UScsc3RyZWFtLnJlYWQoOCkpWzBdIT1zaXplOnJhaXNlIFZhbHVlRXJyb3IoJ1NpZ25pbmcgYmxvY2sgc2l6ZSBtaXNtYXRjaCcpCiAgICBwYXlsb2FkPXN0cmVhbS5yZWFkKHNpemUtMjQpO3Bvc2l0aW9uPTA7cm93cz1bXTtzZWVuPXNldCgpCiAgICB3aGlsZSBwb3NpdGlvbjxsZW4ocGF5bG9hZCk6CiAgICAgICAgaWYgbGVuKHJvd3MpPj02NCBvciBsZW4ocGF5bG9hZCktcG9zaXRpb248ODpyYWlzZSBWYWx1ZUVycm9yKCdTaWduaW5nIGVudHJ5IGV4dGVudCcpCiAgICAgICAgbGVuZ3RoPXN0cnVjdC51bnBhY2tfZnJvbSgnPFEnLHBheWxvYWQscG9zaXRpb24pWzBdO3Bvc2l0aW9uKz04CiAgICAgICAgaWYgbGVuZ3RoPDQgb3IgbGVuZ3RoPmxlbihwYXlsb2FkKS1wb3NpdGlvbjpyYWlzZSBWYWx1ZUVycm9yKCdTaWduaW5nIGVudHJ5IGxlbmd0aCcpCiAgICAgICAgaWRlbnRpdHk9c3RydWN0LnVucGFja19mcm9tKCc8SScscGF5bG9hZCxwb3NpdGlvbilbMF0KICAgICAgICBpZiBpZGVudGl0eSBpbiBzZWVuOnJhaXNlIFZhbHVlRXJyb3IoJ0R1cGxpY2F0ZSBzaWduaW5nIGVudHJ5JykKICAgICAgICBzZWVuLmFkZChpZGVudGl0eSk7dmFsdWU9cGF5bG9hZFtwb3NpdGlvbis0OnBvc2l0aW9uK2xlbmd0aF07cG9zaXRpb24rPWxlbmd0aAogICAgICAgIHJvd3MuYXBwZW5kKGRpY3QoaWQ9ZicweHtpZGVudGl0eTowOHh9Jyx2YWx1ZV9ieXRlcz1sZW4odmFsdWUpLHZhbHVlX3NoYTI1Nj1oYXNobGliLnNoYTI1Nih2YWx1ZSkuaGV4ZGlnZXN0KCkpKQogICAgcmV0dXJuIGRpY3QocHJlc2VudD1UcnVlLGVudHJpZXM9cm93cyxjcnlwdG9ncmFwaGljYWxseV92ZXJpZmllZD1GYWxzZSwKICAgICAgICB3YXJuaW5nPSdPcGFxdWUgYmxvY2sgbWV0YWRhdGEgb25seTsgbm8gY2VydGlmaWNhdGUvc2lnbmF0dXJlL3B1Ymxpc2hlciB0cnVzdCBlc3RhYmxpc2hlZCcpCgpkZWYgaW5zcGVjdF9zdHJlYW0oc3RyZWFtLHNpemUpOgogICAgaWYgdHlwZShzaXplKSBpcyBub3QgaW50IG9yIG5vdCAwPHNpemU8PU1BWF9BUkNISVZFOnJhaXNlIFZhbHVlRXJyb3IoJ0FyY2hpdmUgYnl0ZSBsaW1pdCcpCiAgICBzdHJlYW0uc2VlaygwKTt3aG9sZT1oYXNobGliLnNoYTI1NigpO3JlYWQ9MAogICAgd2hpbGUgcGFydDo9c3RyZWFtLnJlYWQoMTAyNCoxMDI0KToKICAgICAgICByZWFkKz1sZW4ocGFydCkKICAgICAgICBpZiByZWFkPnNpemU6cmFpc2UgVmFsdWVFcnJvcignQXJjaGl2ZSBjaGFuZ2VkL292ZXJzaXplZCcpCiAgICAgICAgd2hvbGUudXBkYXRlKHBhcnQpCiAgICBpZiByZWFkIT1zaXplOnJhaXNlIFZhbHVlRXJyb3IoJ0FyY2hpdmUgc2l6ZSBtaXNtYXRjaCcpCiAgICByb3dzPVtdO3NlZW49c2V0KCk7dG90YWw9MAogICAgd2l0aCB6aXBmaWxlLlppcEZpbGUoc3RyZWFtKSBhcyBhcmNoaXZlOgogICAgICAgIGluZm9zPWFyY2hpdmUuaW5mb2xpc3QoKQogICAgICAgIGlmIGxlbihpbmZvcyk+TUFYX0VOVFJJRVM6cmFpc2UgVmFsdWVFcnJvcignRW50cnkgY291bnQgbGltaXQnKQogICAgICAgIGZvciBlbnRyeSBpbiBpbmZvczoKICAgICAgICAgICAgbmFtZT1lbnRyeS5vcmlnX2ZpbGVuYW1lO3BhdGg9UHVyZVBvc2l4UGF0aChuYW1lKQogICAgICAgICAgICBpZiBuYW1lIT1lbnRyeS5maWxlbmFtZTpyYWlzZSBWYWx1ZUVycm9yKCdUcnVuY2F0ZWQvYW1iaWd1b3VzIFpJUCBuYW1lJykKICAgICAgICAgICAgaWYgbm90IG5hbWUgb3IgbGVuKG5hbWUpPjEwMjQgb3IgcGF0aC5pc19hYnNvbHV0ZSgpIG9yICcuLicgaW4gcGF0aC5wYXJ0cyBvciAnXFwnIGluIG5hbWUgb3IgJzonIGluIG5hbWUgb3IgJ1wwJyBpbiBuYW1lOgogICAgICAgICAgICAgICAgcmFpc2UgVmFsdWVFcnJvcignVW5zYWZlIGVudHJ5IHBhdGgnKQogICAgICAgICAgICBpZiBwYXRoLmFzX3Bvc2l4KCkhPW5hbWUucnN0cmlwKCcvJykgb3IgbmFtZSBpbiBzZWVuOnJhaXNlIFZhbHVlRXJyb3IoJ05vbmNhbm9uaWNhbC9kdXBsaWNhdGUgZW50cnknKQogICAgICAgICAgICBzZWVuLmFkZChuYW1lKQogICAgICAgICAgICBpZiBlbnRyeS5pc19kaXIoKSBhbmQgZW50cnkuZmlsZV9zaXplOnJhaXNlIFZhbHVlRXJyb3IoJ1VuZXhwZWN0ZWQgZGlyZWN0b3J5IHBheWxvYWQnKQogICAgICAgICAgICBtb2RlPWVudHJ5LmV4dGVybmFsX2F0dHI+PjE2CiAgICAgICAgICAgIGlmIHN0YXQuU19JU0xOSyhtb2RlKSBvciBzdGF0LlNfSUZNVChtb2RlKSBub3QgaW4gKDAsc3RhdC5TX0lGUkVHLHN0YXQuU19JRkRJUik6cmFpc2UgVmFsdWVFcnJvcignVW5leHBlY3RlZCBlbnRyeSB0eXBlJykKICAgICAgICAgICAgaWYgZW50cnkuZmxhZ19iaXRzJjE6cmFpc2UgVmFsdWVFcnJvcignRW5jcnlwdGVkIGVudHJpZXMgdW5zdXBwb3J0ZWQnKQogICAgICAgICAgICBpZiBlbnRyeS5jb21wcmVzc190eXBlIG5vdCBpbiAoemlwZmlsZS5aSVBfU1RPUkVELHppcGZpbGUuWklQX0RFRkxBVEVEKTpyYWlzZSBWYWx1ZUVycm9yKCdVbnJldmlld2VkIGNvbXByZXNzaW9uJykKICAgICAgICAgICAgdG90YWwrPWVudHJ5LmZpbGVfc2l6ZQogICAgICAgICAgICBpZiBlbnRyeS5maWxlX3NpemU+TUFYX01FTUJFUiBvciB0b3RhbD5NQVhfVE9UQUwgb3IgZW50cnkuZmlsZV9zaXplPm1heCgxLGVudHJ5LmNvbXByZXNzX3NpemUpKjEwMDpyYWlzZSBWYWx1ZUVycm9yKCdFeHBhbnNpb24gbGltaXQnKQogICAgICAgICAgICBkaWdlc3Q9aGFzaGxpYi5zaGEyNTYoKTtjb3VudD0wO3ByZWZpeD1iJyc7YWRsZXI9MTtzaGExPWhhc2hsaWIuc2hhMSgpCiAgICAgICAgICAgIHdpdGggYXJjaGl2ZS5vcGVuKGVudHJ5KSBhcyBzb3VyY2U6CiAgICAgICAgICAgICAgICB3aGlsZSBwYXJ0Oj1zb3VyY2UucmVhZCgxMDI0KjEwMjQpOgogICAgICAgICAgICAgICAgICAgIHN0YXJ0PWNvdW50CiAgICAgICAgICAgICAgICAgICAgY291bnQrPWxlbihwYXJ0KQogICAgICAgICAgICAgICAgICAgIGlmIGNvdW50PmVudHJ5LmZpbGVfc2l6ZSBvciBjb3VudD5NQVhfTUVNQkVSOnJhaXNlIFZhbHVlRXJyb3IoJ01lbWJlciBieXRlIGxpbWl0JykKICAgICAgICAgICAgICAgICAgICBkaWdlc3QudXBkYXRlKHBhcnQpCiAgICAgICAgICAgICAgICAgICAgaWYgbGVuKHByZWZpeCk8MTI4OnByZWZpeD0ocHJlZml4K3BhcnQpWzoxMjhdCiAgICAgICAgICAgICAgICAgICAgaWYgbmFtZS5lbmRzd2l0aCgnLmRleCcpOgogICAgICAgICAgICAgICAgICAgICAgICBhZGxlcj16bGliLmFkbGVyMzIocGFydFttYXgoMCwxMi1zdGFydCk6XSxhZGxlcikKICAgICAgICAgICAgICAgICAgICAgICAgc2hhMS51cGRhdGUocGFydFttYXgoMCwzMi1zdGFydCk6XSkKICAgICAgICAgICAgaWYgY291bnQhPWVudHJ5LmZpbGVfc2l6ZTpyYWlzZSBWYWx1ZUVycm9yKCdNZW1iZXIgc2l6ZSBtaXNtYXRjaCcpCiAgICAgICAgICAgIHJvdz1kaWN0KG5hbWU9bmFtZSxieXRlcz1jb3VudCxzaGEyNTY9ZGlnZXN0LmhleGRpZ2VzdCgpLGRpcmVjdG9yeT1lbnRyeS5pc19kaXIoKSkKICAgICAgICAgICAgaGVhZGVyPWZvcm1hdF9oZWFkZXIobmFtZSxwcmVmaXgsY291bnQsZGV4X2FkbGVyPWFkbGVyJjB4ZmZmZmZmZmYsZGV4X3NoYTE9c2hhMS5oZXhkaWdlc3QoKSkKICAgICAgICAgICAgaWYgaGVhZGVyIGlzIG5vdCBOb25lOnJvd1snZm9ybWF0X2hlYWRlciddPWhlYWRlcgogICAgICAgICAgICByb3dzLmFwcGVuZChyb3cpCiAgICAgICAgYmxvY2s9c2lnbmluZ19ibG9jayhzdHJlYW0sYXJjaGl2ZS5zdGFydF9kaXIpCiAgICByZXR1cm4gZGljdChzY2hlbWE9J2ZpcnN0bGlnaHQtc3RhdGljLWFyY2hpdmUtaW52ZW50b3J5LnYxJyx3aG9sZV9zaGEyNTY9d2hvbGUuaGV4ZGlnZXN0KCksYnl0ZXM9c2l6ZSwKICAgICAgICBlbnRyaWVzPXJvd3MsZW50cnlfY291bnQ9bGVuKHJvd3MpLHVuY29tcHJlc3NlZF9ieXRlcz10b3RhbCxzaWduaW5nX2Jsb2NrPWJsb2NrLAogICAgICAgIGV4dHJhY3RlZF9maWxlcz0wLGV4ZWN1dGVkPUZhbHNlLGFuZHJvaWRfbWFuaWZlc3RfZGVjb2RlZD1GYWxzZSwKICAgICAgICBkZXhfbWVtYmVycz1bclsnbmFtZSddIGZvciByIGluIHJvd3MgaWYgclsnbmFtZSddLmVuZHN3aXRoKCcuZGV4JyldLAogICAgICAgIG5hdGl2ZV9saWJyYXJpZXM9W3JbJ25hbWUnXSBmb3IgciBpbiByb3dzIGlmIHJbJ25hbWUnXS5lbmRzd2l0aCgnLnNvJyldLAogICAgICAgIHVuZXhwZWN0ZWRfZXhlY3V0YWJsZV9zdWZmaXhlcz1bclsnbmFtZSddIGZvciByIGluIHJvd3MgaWYgclsnbmFtZSddLmxvd2VyKCkuZW5kc3dpdGgoKCcuZXhlJywnLmRsbCcsJy5wczEnLCcuYmF0JywnLmNtZCcsJy5zaCcpKV0sCiAgICAgICAgdmVyaWZpY2F0aW9uX2dhcHM9WydBbmRyb2lkIGJpbmFyeSBtYW5pZmVzdCBub3QgZGVjb2RlZCcsJ0FQSyBzaWduYXR1cmVzIG5vdCBjcnlwdG9ncmFwaGljYWxseSB2ZXJpZmllZCcsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICdObyBpbmRlcGVuZGVudGx5IHRydXN0ZWQgY29tcGxldGUgcGF5bG9hZC9zaWduZXIgYmFzZWxpbmUnLCdObyBnYW1lIHJlc291cmNlIHJpZ2h0cyB2ZXJpZmljYXRpb24nXSwKICAgICAgICBzaWduYXR1cmVfY3J5cHRvX3ZlcmlmaWVkPUZhbHNlLHByb3ZlbmFuY2VfdmVyaWZpZWQ9RmFsc2UscmlnaHRzX3ZlcmlmaWVkPUZhbHNlLAogICAgICAgIGV4ZWN1dGlvbl9hdXRob3JpemVkPUZhbHNlLHNjb3BlPSdTdGF0aWMgbWVtYmVyIGhhc2hlcy9DUkMgYW5kIG9wYXF1ZSBzaWduaW5nLWJsb2NrIG1ldGFkYXRhIG9ubHknKQoKZGVmIGluc3BlY3RfZml4dHVyZShkYXRhKToKICAgICIiIlVuaXQtdGVzdCBhZGFwdGVyOyBjYWxsZXIgc3VwcGxpZXMgb3VyIG93biBzeW50aGV0aWMgYnl0ZXMsIG5ldmVyIGEgZG93bmxvYWQuIiIiCiAgICByZXR1cm4gaW5zcGVjdF9zdHJlYW0oaW8uQnl0ZXNJTyhkYXRhKSxsZW4oZGF0YSkpCgpkZWYgbWFpbigpOgogICAgaW1wb3J0IGFyZ3BhcnNlCiAgICBpZiBwbGF0Zm9ybS5zeXN0ZW0oKSE9J0xpbnV4JzpyYWlzZSBSdW50aW1lRXJyb3IoJ0Nsb3VkLW9ubHkgaW50YWtlOyByZWZ1c2luZyBXaW5kb3dzIGV4ZWN1dGlvbicpCiAgICBwYXJzZXI9YXJncGFyc2UuQXJndW1lbnRQYXJzZXIoZGVzY3JpcHRpb249X19kb2NfXyk7cGFyc2VyLmFkZF9hcmd1bWVudCgnYXBwcm92ZWRfaW5wdXQnKTthcmdzPXBhcnNlci5wYXJzZV9hcmdzKCkKICAgIHBhdGg9UGF0aChhcmdzLmFwcHJvdmVkX2lucHV0KQogICAgaWYgcGF0aC5pc19zeW1saW5rKCkgb3Igbm90IHBhdGguaXNfZmlsZSgpOnJhaXNlIFZhbHVlRXJyb3IoJ1Jldmlld2VkIHJlZ3VsYXIgaW5wdXQgcmVxdWlyZWQnKQogICAgd2l0aCBwYXRoLm9wZW4oJ3JiJykgYXMgc291cmNlOnJlcG9ydD1pbnNwZWN0X3N0cmVhbShzb3VyY2UscGF0aC5zdGF0KCkuc3Rfc2l6ZSkKICAgIHByaW50KGpzb24uZHVtcHMocmVwb3J0LGluZGVudD0yKSkKCmlmIF9fbmFtZV9fPT0nX19tYWluX18nOm1haW4oKQo='
+          import base64, hashlib, json, os, platform, shutil, signal, ssl, tempfile
+          from pathlib import Path
+          from urllib.request import Request, build_opener, ProxyHandler, HTTPSHandler, HTTPRedirectHandler
+          from urllib.error import HTTPError
+          
+          URL = 'https://tempweb.nullsusercontent.com/fpapk/nr_15.535.13_release_ff1c6c29.apk'
+          MAX_BYTES = 1_000_000_000
+          EXPECTED_APK = '685c115ee432d5fd2d7be856a58ea0cb029c9c187aa9061f3cd250994dfbcf2a'
+          EXPECTED_LIBG = '110aa2b5cac391c498645e072b0d88729428c2c2845e7e2737ca8ee979059783'
+          
+          class StopIntake(Exception):
+              pass
+          
+          class NoRedirect(HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+          
+          def deadline(signum, frame):
+              raise StopIntake('stage deadline exceeded')
+          
+          def acquire(opener, path):
+              request = Request(URL, method='GET', headers={'Accept-Encoding': 'identity'})
+              # Exactly one open, no retry, cookies, authentication, proxy or redirect handler.
+              try:
+                  response = opener.open(request, timeout=15)
+              except HTTPError as error:
+                  code = error.code
+                  error.close()  # Do not read denial pages or retry.
+                  print(json.dumps({'acquisition': 'FAILED', 'http_status': code,
+                                    'body_bytes_read': 0, 'retry': False}))
+                  raise StopIntake('HTTP non-success; stop') from None
+              with response:
+                  if response.status != 200 or response.geturl() != URL:
+                      raise StopIntake('unexpected response status or destination')
+                  mime = response.headers.get_content_type()
+                  if mime not in ('application/vnd.android.package-archive', 'application/octet-stream'):
+                      raise StopIntake('unexpected content type')
+                  if response.headers.get('Content-Encoding', 'identity').lower() != 'identity':
+                      raise StopIntake('unexpected transfer content encoding')
+                  values = response.headers.get_all('Content-Length', [])
+                  if len(values) > 1:
+                      raise StopIntake('ambiguous content length')
+                  length = None
+                  if values:
+                      if not values[0].isascii() or not values[0].isdecimal():
+                          raise StopIntake('invalid content length')
+                      length = int(values[0])
+                      if not 0 < length <= MAX_BYTES:
+                          raise StopIntake('declared size exceeds approval')
+                  digest = hashlib.sha256()
+                  count = 0
+                  with path.open('xb') as output:
+                      while count < MAX_BYTES:
+                          part = response.read(min(1024 * 1024, MAX_BYTES - count))
+                          if not part:
+                              break
+                          count += len(part)
+                          output.write(part)
+                          digest.update(part)
+                          if length is not None and count == length:
+                              break
+                  # Never read a probe byte beyond the approved cap. Unknown length at cap
+                  # is conservatively rejected rather than attempting to establish EOF.
+                  if count == 0 or (length is not None and count != length) or (length is None and count == MAX_BYTES):
+                      raise StopIntake('incomplete or boundary-ambiguous transfer')
+                  print(json.dumps({'acquisition': 'COMPLETED', 'http_status': 200,
+                                    'bytes_read': count, 'sha256': digest.hexdigest(),
+                                    'declared_content_length': length, 'redirects': 0, 'retries': 0}))
+                  return digest.hexdigest()
+          
+          def main():
+              if platform.system() != 'Linux' or os.geteuid() == 0:
+                  raise StopIntake('nonroot Linux hosted runner required')
+              import resource
+              os.umask(0o077)
+              resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+              resource.setrlimit(resource.RLIMIT_FSIZE, (1_100_000_000, 1_100_000_000))
+              resource.setrlimit(resource.RLIMIT_AS, (1_500_000_000, 1_500_000_000))
+              signal.signal(signal.SIGALRM, deadline)
+              signal.signal(signal.SIGTERM, deadline)
+              folder = Path(tempfile.mkdtemp(prefix='firstlight-static-one-'))
+              try:
+                  if shutil.disk_usage(folder).free < 4_000_000_000:
+                      raise StopIntake('less than4GB free temporary storage')
+                  raw = base64.b64decode(INSPECTOR_BASE64, validate=True)
+                  if hashlib.sha256(raw).hexdigest() != INSPECTOR_PIN:
+                      raise StopIntake('reviewed inspector changed')
+                  namespace = {'__name__': 'reviewed_static_inspector'}
+                  # Execute ONLY our hash-pinned source, never any downloaded content.
+                  exec(compile(raw, 'reviewed_archive_inspector.py', 'exec'), namespace)
+                  path = folder / 'candidate.apk'
+                  signal.alarm(180)
+                  opener = build_opener(ProxyHandler({}), HTTPSHandler(context=ssl.create_default_context()), NoRedirect())
+                  downloaded_hash = acquire(opener, path)
+                  signal.alarm(120)
+                  with path.open('rb') as source:
+                      report = namespace['inspect_stream'](source, path.stat().st_size)
+                  signal.alarm(0)
+                  libg = [r for r in report['entries'] if r['name'] == 'lib/arm64-v8a/libg.so']
+                  hashes_match = (downloaded_hash == report['whole_sha256'] == EXPECTED_APK
+                                  and len(libg) == 1 and libg[0]['sha256'] == EXPECTED_LIBG)
+                  report['pinned_component_hashes_match'] = hashes_match
+                  report['compatibility_verdict'] = 'UNVERIFIED' if hashes_match else 'REJECTED_PIN_MISMATCH'
+                  report['package_evidence'] = {'expected_package': 'nullsroyale.rel.free',
+                      'expected_version': '15.535.13', 'expected_version_code': 150535013,
+                      'actual_manifest_decoded': False}
+                  report['content_15_535_86_verified'] = False
+                  report['signature_verification_approved'] = False
+                  payload = json.dumps(report, ensure_ascii=True, indent=2)
+                  if len(payload.encode('utf-8')) > 16_000_000:
+                      raise StopIntake('inspection output limit')
+                  print('STATIC_INVENTORY_BEGIN')
+                  print(payload)
+                  print('STATIC_INVENTORY_END')
+                  if not hashes_match:
+                      raise StopIntake('critical hash mismatch; no further action')
+              finally:
+                  signal.alarm(0)
+                  # Only this process-created private temporary directory; no extracted files.
+                  shutil.rmtree(folder)
+                  print(json.dumps({'temporary_directory_removed': True,
+                                    'apk_executed': False, 'artifact_uploaded': False}))
+          
+          if __name__ == '__main__':
+              try:
+                  main()
+              except Exception as error:
+                  # Fixed exception class only; never echo untrusted server text/URLs/content.
+                  print(json.dumps({'result': 'FAILED', 'reason_type': type(error).__name__,
+                                    'no_retry': True, 'execution_authorized': False}))
+                  raise SystemExit(1)
+          PY
