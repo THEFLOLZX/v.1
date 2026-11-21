@@ -4,7 +4,7 @@ on:
 permissions: {}
 jobs:
   inspect:
-    if: github.repository == 'THEFLOLZX/v.1' && github.run_number == 1 && github.run_attempt == 1
+    if: github.repository == 'THEFLOLZX/v.1' && github.run_number == 2 && github.run_attempt == 1
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
@@ -41,6 +41,7 @@ jobs:
           LIBG_PIN = '110aa2b5cac391c498645e072b0d88729428c2c2845e7e2737ca8ee979059783'
           OBSERVED_BYTES = 794_497_101
           MAX_BYTES = 1_000_000_000
+          AUTHORIZED_RUN_NUMBER = '2'  # Run1 consumed; next attempt requires separate approval.
           METADATA_ENDPOINT = 'https://ckdatabasews.icloud.com/database/1/com.apple.clouddocs/production/public/records/resolve'
 
 
@@ -68,13 +69,23 @@ jobs:
               # File identity still requires the unchanged original APK SHA256 below.
               if not isinstance(secret, str) or not 0 < len(secret) <= 8192:
                   raise StopIntake('MISSING_OR_INVALID_PRIVATE_SECRET')
+              # urlsplit strips some control characters; reject rather than normalize them.
+              if (any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in secret)
+                      or '\\' in secret or secret[0] in "\"'" or secret[-1] in "\"'"
+                      or '"' in secret or secret.count('#') > 1
+                      or '?' in secret.split('#', 1)[0]):
+                  raise StopIntake('MISSING_OR_INVALID_PRIVATE_SECRET')
               source = urlsplit(secret)
               prefixes = {'www.icloud.com': '/iclouddrive/', 'drive.icloud.com': '/shared/'}
               prefix = prefixes.get(source.netloc)
-              if source.scheme != 'https' or not prefix or source.query or not source.path.startswith(prefix):
+              if (source.scheme != 'https' or not prefix or source.query
+                      or source.username is not None or source.password is not None
+                      or not source.path.startswith(prefix)):
                   raise StopIntake('MISSING_OR_INVALID_PRIVATE_SECRET')
               key = source.path.removeprefix(prefix)
-              if not re.fullmatch('[A-Za-z0-9_-]{22}', key):
+              # 25 is verified by the earlier anonymous Apple resolution. Retain the
+              # existing 22-character accepted form without claiming it was live-validated.
+              if not re.fullmatch(r'(?:[A-Za-z0-9_-]{22}|[A-Za-z0-9_-]{25})', key):
                   raise StopIntake('MISSING_OR_INVALID_PRIVATE_SECRET')
               return key
 
@@ -182,7 +193,7 @@ jobs:
                   if (platform.system() != 'Linux' or os.geteuid() == 0
                           or os.environ.get('GITHUB_REPOSITORY') != 'THEFLOLZX/v.1'
                           or os.environ.get('GITHUB_EVENT_NAME') != 'workflow_dispatch'
-                          or os.environ.get('GITHUB_RUN_NUMBER') != '1'
+                          or os.environ.get('GITHUB_RUN_NUMBER') != AUTHORIZED_RUN_NUMBER
                           or os.environ.get('GITHUB_RUN_ATTEMPT') != '1'):
                       raise StopIntake('ONE_SHOT_NONROOT_HOST_GUARD')
                   resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
