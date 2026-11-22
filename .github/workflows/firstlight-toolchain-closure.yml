@@ -1,0 +1,641 @@
+name: FirstLight TOOLCHAIN CLOSURE ONE RUN
+on:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  inspect:
+    if: github.repository == 'THEFLOLZX/v.1' && github.run_number == 1 && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: One inert official-package comparison
+        shell: bash --noprofile --norc -e {0}
+        run: |
+          timeout --signal=TERM --kill-after=1s 330s python3 -I -B - <<'FIRSTLIGHT_CLOSURE'
+          """Cloud-only, inert publisher-package comparison. Never installs/loads tools.
+
+          Network is limited to TWO fixed HTTPS objects, one request each, no redirects.
+          All archive reads are data-only, streamed and bounded; no filesystem extraction.
+          """
+          import bz2
+          import gzip
+          import hashlib
+          import io
+          import json
+          import lzma
+          import os
+          from pathlib import Path, PurePosixPath
+          import platform
+          import posixpath
+          import re
+          import shutil
+          import signal
+          import ssl
+          import stat
+          import tarfile
+          import time
+          import zipfile
+          from urllib.error import HTTPError
+          from urllib.request import Request, build_opener, ProxyHandler, HTTPSHandler, HTTPRedirectHandler
+          FAILURES = frozenset('''TOOLCHAIN_NOT_REVIEWED TOOLCHAIN_IDENTITY_MISMATCH
+          TOOLCHAIN_LAYOUT TOOLCHAIN_LIMIT SIGNATURE_REJECTED SIGNATURE_OUTPUT_REJECTED
+          STATIC_BRANCH_REJECTED CONTENT_IDENTITY_MISMATCH
+          TOOLCHAIN_FILE_SYMLINK TOOLCHAIN_FILE_MISSING TOOLCHAIN_FILE_TYPE TOOLCHAIN_FILE_SIZE
+          TOOLCHAIN_FILE_CHANGED TOOLCHAIN_FILE_IO TOOLCHAIN_ROOT_MISSING TOOLCHAIN_ROOT_TYPE
+          TOOLCHAIN_ROOT_SYMLINK TOOLCHAIN_ROOT_IO TOOLCHAIN_WALK_IO TOOLCHAIN_ENTRY_IO
+          TOOLCHAIN_ENTRY_TYPE TOOLCHAIN_LINK_EXTERNAL TOOLCHAIN_LINK_BROKEN TOOLCHAIN_LINK_LOOP
+          TOOLCHAIN_LINK_IO TOOLCHAIN_LINK_TARGET_TYPE TOOLCHAIN_EXTERNAL_POLICY
+          TOOLCHAIN_EXTERNAL_IDENTITY TOOLCHAIN_EXTERNAL_UNUSED TOOLCHAIN_TREE_CHANGED
+          TOOLCHAIN_TREE_INCOMPLETE TOOLCHAIN_ROOT_PATH TOOLCHAIN_JAR_MANIFEST
+          TOOLCHAIN_JAR_DEPENDENCY TOOLCHAIN_JAR_FORMAT TOOLCHAIN_LINK_TRAVERSAL'''.split())
+          class VerificationError(ValueError):
+              def __init__(self, code, *, relative_path=None, entry_index=None, declared_bytes=None):
+                  if code not in FAILURES:raise ValueError('Unknown fixed code')
+                  self.code=code
+                  self.counters={key:value for key,value in (('entry_index',entry_index),('declared_bytes',declared_bytes))
+                      if type(value) is int and 0<=value<2**63}
+                  self.relative_path=(relative_path if isinstance(relative_path,str)
+                      and re.fullmatch(r'[A-Za-z0-9_.+/-]{1,512}',relative_path)
+                      and not relative_path.startswith('/')
+                      and not any(part in ('','.','..') for part in relative_path.split('/')) else None)
+                  super().__init__(code)
+
+              def safe_detail(self):
+                  result=dict(code=self.code,counters=dict(self.counters))
+                  if self.relative_path is not None:result['relative_jdk_path']=self.relative_path
+                  return result
+          def file_hash(path, budget, limit=512_000_000):
+              """Read regular files only; refuse symlinks, races, missing files and growth."""
+              try:before=path.lstat()
+              except FileNotFoundError:raise VerificationError('TOOLCHAIN_FILE_MISSING') from None
+              except OSError:raise VerificationError('TOOLCHAIN_FILE_IO') from None
+              if stat.S_ISLNK(before.st_mode):raise VerificationError('TOOLCHAIN_FILE_SYMLINK')
+              if not stat.S_ISREG(before.st_mode):raise VerificationError('TOOLCHAIN_FILE_TYPE')
+              if before.st_size>limit:raise VerificationError('TOOLCHAIN_FILE_SIZE',declared_bytes=before.st_size)
+              sha=hashlib.sha256();count=0
+              def identity(info):
+                  return (info.st_dev,info.st_ino,info.st_mode,info.st_size,info.st_mtime_ns,info.st_ctime_ns)
+              try:
+                  flags=os.O_RDONLY|getattr(os,'O_BINARY',0)|getattr(os,'O_NOFOLLOW',0)|getattr(os,'O_NONBLOCK',0)
+                  fd=os.open(path,flags)
+                  with os.fdopen(fd,'rb') as stream:
+                      opened=identity(os.fstat(stream.fileno()))
+                      # Windows lstat/fstat timestamp caches can differ immediately after
+                      # fixture writes. Linux execution retains the full cross-API check.
+                      if opened[:4]!=identity(before)[:4] or (os.name!='nt' and opened!=identity(before)):
+                          raise VerificationError('TOOLCHAIN_FILE_CHANGED')
+                      while part:=stream.read(min(1024*1024,limit-count+1,1_000_000_000-budget[0]+1)):
+                          count+=len(part);budget[0]+=len(part)
+                          if count>limit or budget[0]>1_000_000_000:raise VerificationError('TOOLCHAIN_LIMIT')
+                          sha.update(part)
+                      if count!=before.st_size or identity(os.fstat(stream.fileno()))!=opened:
+                          raise VerificationError('TOOLCHAIN_FILE_CHANGED')
+                  final=identity(path.lstat())
+                  if final[:4]!=opened[:4] or (os.name!='nt' and final!=opened):
+                      raise VerificationError('TOOLCHAIN_FILE_CHANGED')
+              except FileNotFoundError:raise VerificationError('TOOLCHAIN_FILE_MISSING') from None
+              except OSError:raise VerificationError('TOOLCHAIN_FILE_IO') from None
+              return sha.hexdigest()
+          def jdk_tree_hash(root,budget,external_dependencies=None,collect_issues=False,observations=None):
+              """Whole-tree binding; external regular files need exact reviewed link+hash.
+
+              Unknown links are inspected as metadata only, never read. External directories
+              are rejected. Collection mode retains up to64 independent failures, but NEVER
+              returns a digest for an incomplete tree. No policy exemption is inferred.
+              """
+              try:root_info=root.lstat()
+              except FileNotFoundError:raise VerificationError('TOOLCHAIN_ROOT_MISSING') from None
+              except OSError:raise VerificationError('TOOLCHAIN_ROOT_IO') from None
+              if stat.S_ISLNK(root_info.st_mode):raise VerificationError('TOOLCHAIN_ROOT_SYMLINK')
+              if not stat.S_ISDIR(root_info.st_mode):raise VerificationError('TOOLCHAIN_ROOT_TYPE')
+              try:root=root.resolve(strict=True)
+              except OSError:raise VerificationError('TOOLCHAIN_ROOT_IO') from None
+              policies=external_dependencies if external_dependencies is not None else {}
+              if not isinstance(policies,dict) or len(policies)>32:raise VerificationError('TOOLCHAIN_EXTERNAL_POLICY')
+              for relative,spec in policies.items():
+                  if (not isinstance(relative,str) or not re.fullmatch(r'[A-Za-z0-9_.+/-]{1,512}',relative)
+                          or relative.startswith('/') or any(part in ('','.','..') for part in relative.split('/'))
+                          or not isinstance(spec,dict) or set(spec)!={'link_text','target','bytes','sha256','review_sha256'}
+                          or not isinstance(spec['link_text'],str) or not 0<len(spec['link_text'])<=4096
+                          or not isinstance(spec['target'],str) or not Path(spec['target']).is_absolute()
+                          or type(spec['bytes']) is not int or not 0<=spec['bytes']<=512_000_000
+                          or any(not isinstance(spec[k],str) or not re.fullmatch('[0-9a-f]{64}',spec[k]) for k in ('sha256','review_sha256'))):
+                      raise VerificationError('TOOLCHAIN_EXTERNAL_POLICY')
+              digest=hashlib.sha256();count=0;issues=[];used=set();expected_dirs=set();visited_dirs=set();snapshots=[]
+              def record_issue(exc):
+                  if not collect_issues:raise exc
+                  issues.append(exc.safe_detail())
+                  if len(issues)>=64:
+                      error=VerificationError('TOOLCHAIN_TREE_INCOMPLETE');error.issues=issues;raise error
+              def walk_error(exc):
+                  # No exception text or arbitrary error filename is emitted.
+                  record_issue(VerificationError('TOOLCHAIN_WALK_IO'))
+              def stamp(info):return (info.st_dev,info.st_ino,info.st_mode,info.st_size,info.st_mtime_ns,info.st_ctime_ns)
+              for directory,dirs,files in os.walk(root,followlinks=False,onerror=walk_error):
+                  visited_dirs.add(Path(directory))
+                  dirs.sort();files.sort()
+                  for name in dirs+files:
+                      path=Path(directory)/name;relative=path.relative_to(root).as_posix()
+                      count+=1
+                      if count>20000:raise VerificationError('TOOLCHAIN_LIMIT')
+                      try:
+                          try:info=path.lstat()
+                          except OSError:raise VerificationError('TOOLCHAIN_ENTRY_IO') from None
+                          mode=info.st_mode
+                          if stat.S_ISLNK(mode):
+                              try:link=os.readlink(path);target=path.resolve(strict=True)
+                              except FileNotFoundError:raise VerificationError('TOOLCHAIN_LINK_BROKEN') from None
+                              except RuntimeError:raise VerificationError('TOOLCHAIN_LINK_LOOP') from None
+                              except OSError as exc:
+                                  raise VerificationError('TOOLCHAIN_LINK_LOOP' if exc.errno==40 else 'TOOLCHAIN_LINK_IO') from None
+                              lexical=Path(os.path.abspath(path.parent/link))
+                              if not lexical.is_relative_to(root) or not target.is_relative_to(root):
+                                  spec=policies.get(relative)
+                                  if spec is None:raise VerificationError('TOOLCHAIN_LINK_EXTERNAL')
+                                  # External alias chains need their own complete contract;
+                                  # a final in-root target does not excuse an escaping route.
+                                  if lexical!=target:raise VerificationError('TOOLCHAIN_LINK_TRAVERSAL')
+                                  if link!=spec['link_text'] or target!=Path(spec['target']):
+                                      raise VerificationError('TOOLCHAIN_EXTERNAL_IDENTITY')
+                                  try:external=target.lstat()
+                                  except OSError:raise VerificationError('TOOLCHAIN_LINK_IO') from None
+                                  if not stat.S_ISREG(external.st_mode):raise VerificationError('TOOLCHAIN_LINK_TARGET_TYPE')
+                                  # Never follow an unknown target, directory or changed link.
+                                  if external.st_size!=spec['bytes']:raise VerificationError('TOOLCHAIN_EXTERNAL_IDENTITY')
+                                  actual=file_hash(target,budget)
+                                  if actual!=spec['sha256']:raise VerificationError('TOOLCHAIN_EXTERNAL_IDENTITY')
+                                  used.add(relative)
+                                  snapshots.append((target,stamp(external),relative))
+                                  record=['external-file-link',relative,link,str(target),spec['bytes'],actual,spec['review_sha256']]
+                              else:
+                                  if relative in policies:raise VerificationError('TOOLCHAIN_EXTERNAL_IDENTITY')
+                                  record=['link',relative,link]
+                          elif stat.S_ISREG(mode):
+                              record=['file',relative,mode&0o777,file_hash(path,budget)]
+                              try:refreshed=path.lstat()
+                              except OSError:raise VerificationError('TOOLCHAIN_TREE_CHANGED') from None
+                              if stamp(refreshed)[:4]!=stamp(info)[:4] or (os.name!='nt' and stamp(refreshed)!=stamp(info)):
+                                  raise VerificationError('TOOLCHAIN_TREE_CHANGED')
+                              info=refreshed
+                          elif stat.S_ISDIR(mode):
+                              expected_dirs.add(path);record=['directory',relative,mode&0o777]
+                          else:raise VerificationError('TOOLCHAIN_ENTRY_TYPE')
+                          snapshots.append((path,stamp(info),relative))
+                          digest.update(json.dumps(record,ensure_ascii=True,separators=(',',':')).encode()+b'\n')
+                          if observations is not None:observations[relative]=record
+                      except VerificationError as exc:
+                          if exc.code=='TOOLCHAIN_LIMIT':raise
+                          exc.counters['entry_index']=count-1
+                          # Reconstruct via the allowlisted constructor; never expose raw names.
+                          safe=VerificationError(exc.code,relative_path=relative,entry_index=count-1,
+                              declared_bytes=exc.counters.get('declared_bytes'))
+                          record_issue(safe)
+              if expected_dirs-visited_dirs:record_issue(VerificationError('TOOLCHAIN_TREE_CHANGED'))
+              for path,before,relative in [(root,stamp(root_info),None)]+snapshots:
+                  try:changed=stamp(path.lstat())!=before
+                  except OSError:changed=True
+                  if changed:
+                      record_issue(VerificationError('TOOLCHAIN_TREE_CHANGED',relative_path=relative))
+              if set(policies)-used:record_issue(VerificationError('TOOLCHAIN_EXTERNAL_UNUSED'))
+              if issues:
+                  error=VerificationError('TOOLCHAIN_TREE_INCOMPLETE');error.issues=issues;raise error
+              return digest.hexdigest()
+
+          SDK=Path('/usr/local/lib/android/sdk/build-tools/36.1.0')
+          JDK=Path('/usr/lib/jvm/temurin-17-jdk-amd64')
+          JDK_PREFIX='usr/lib/jvm/temurin-17-jdk-amd64/'
+          WORKFLOW_REF='THEFLOLZX/v.1/.github/workflows/firstlight-toolchain-closure.yml@refs/heads/main'
+          PACKAGES={
+              'google':dict(url='https://dl.google.com/android/repository/build-tools_r36.1_linux.zip',
+                  size=64195204,algorithm='sha1',digest='936a0d6bd5ae3e2118a7567dddbc95ff67ed46e9'),
+              'adoptium':dict(url='https://packages.adoptium.net/artifactory/deb/pool/main/t/temurin-17/temurin-17-jdk_17.0.21.0.0+9-0_amd64.deb',
+                  size=166778108,algorithm='sha256',digest='6cc11a2fdb68b98d8471660308f35dae99bae6b1135511e9f0ea5c5f03645868')}
+          OBSERVED_FILES={'apksigner_jar': {'bytes': 1109763, 'path': '/usr/local/lib/android/sdk/build-tools/36.1.0/lib/apksigner.jar', 'sha256': '71e18adf733f5e112d1f062dbe6b0c2eb439a4d7c773d083c42a703c66f56df1'}, 'apksigner_launcher': {'bytes': 2959, 'path': '/usr/local/lib/android/sdk/build-tools/36.1.0/apksigner', 'sha256': 'b47549e373b895ce6ca620d0c7887e674d9615ffa837a86ac601dcfd04adb0f0'}, 'java/bin/java': {'bytes': 16320, 'path': '/usr/lib/jvm/temurin-17-jdk-amd64/bin/java', 'sha256': 'a2195ae9f8a91b82f53df7e1d1b9a650937ebbabbf67d0240c6378b4fbd9990b'}, 'java/conf/security/java.security': {'bytes': 68727, 'path': '/usr/lib/jvm/temurin-17-jdk-amd64/conf/security/java.security', 'sha256': '7c38ec0b34fc844b327e364e86c8f3558e8522ac42dda06e8961858b48a073e1'}, 'java/lib/modules': {'bytes': 130545348, 'path': '/usr/lib/jvm/temurin-17-jdk-amd64/lib/modules', 'sha256': 'fcdfc72acc1ec5e8542fc2170c587ef23edbbdeddcbf435f169d270e02469d7c'}, 'java/lib/server/libjvm.so': {'bytes': 24062032, 'path': '/usr/lib/jvm/temurin-17-jdk-amd64/lib/server/libjvm.so', 'sha256': '9a00b72837fd20c9450cf113ef6526af174cac87d4746b1713de26f1103d0b68'}, 'java/release': {'bytes': 1627, 'path': '/usr/lib/jvm/temurin-17-jdk-amd64/release', 'sha256': '9568390645661374febde48f3c7a019f21cb116d6e4c627de29c119aa7bd0efc'}, 'package.xml': {'bytes': 18512, 'path': '/usr/local/lib/android/sdk/build-tools/36.1.0/package.xml', 'sha256': '57aa6abb22a1fba7d79da80a9aaf6edf06458c5ff39ee4e20db3145bb6fd99fa'}, 'source.properties': {'bytes': 62, 'path': '/usr/local/lib/android/sdk/build-tools/36.1.0/source.properties', 'sha256': 'cde98413251206c52e50cfcefc2e0627b2660c03814e9c9ab7e2c56fdf5a9472'}}
+          CHUNK=1024*1024
+          MAX_TRANSFER=250_000_000
+          MAX_MEMBER=512_000_000
+          MAX_OUTPUT=2_000_000_000
+          MAX_ENTRIES=20000
+          CODES=frozenset('''HOST_GUARD SCRATCH_LAYOUT SCRATCH_EXISTS STORAGE_LIMIT CLEANUP_FAILED
+          TRANSFER_HTTP TRANSFER_FORMAT TRANSFER_SIZE TRANSFER_DEADLINE TRANSFER_DIGEST
+          OBSERVED_FILE_CHANGED ZIP_FORMAT ARCHIVE_PATH ARCHIVE_DUPLICATE ARCHIVE_LIMIT
+          ARCHIVE_TYPE AR_FORMAT TAR_FORMAT TAR_METADATA TAR_TRAILING COMPRESSION_UNSUPPORTED
+          PACKAGE_LAYOUT PACKAGE_TARGET_MISSING PACKAGE_LINK_LOOP PACKAGE_LINK_ESCAPE
+          PACKAGE_CONTENT_MISMATCH RUNTIME_LAYOUT_UNRESOLVED STATIC_IO_REDACTED INTERRUPTED'''.split())
+
+
+          class ClosureError(ValueError):
+              def __init__(self,code):
+                  if code not in CODES:raise ValueError('Unknown fixed closure code')
+                  self.code=code;super().__init__(code)
+
+
+          class Interrupted(BaseException):pass
+          def interrupted(*args):raise Interrupted()
+
+
+          def checkpoint(report):print(json.dumps(report,sort_keys=True),flush=True)
+
+
+          def safe_failure(exc):
+              code=getattr(exc,'code',None)
+              out={'code':code if type(code) is str and code in CODES|FAILURES else 'STATIC_IO_REDACTED'}
+              if isinstance(exc,VerificationError):
+                  out['detail']=exc.safe_detail()
+                  if hasattr(exc,'issues'):out['issues']=exc.issues
+              return out
+
+
+          class NoRedirect(HTTPRedirectHandler):
+              def redirect_request(self,*args,**kwargs):return None
+
+
+          def acquire(name,path,transfer):
+              spec=PACKAGES[name]
+              opener=build_opener(ProxyHandler({}),HTTPSHandler(context=ssl.create_default_context()),NoRedirect())
+              request=Request(spec['url'],headers={'User-Agent':'FirstLight-static-toolchain-closure','Accept-Encoding':'identity'})
+              sha=hashlib.sha256();published=hashlib.new(spec['algorithm']);count=0;deadline=time.monotonic()+90
+              try:
+                  with opener.open(request,timeout=20) as response:
+                      if response.status!=200 or response.headers.get('Content-Encoding','identity')!='identity':raise ClosureError('TRANSFER_HTTP')
+                      length=response.headers.get('Content-Length')
+                      if length is not None and length!=str(spec['size']):raise ClosureError('TRANSFER_SIZE')
+                      kind=response.headers.get('Content-Type','').split(';')[0].strip().lower()
+                      allowed={'application/zip','application/octet-stream'} if name=='google' else {'application/x-debian-package','application/vnd.debian.binary-package','application/octet-stream'}
+                      if kind not in allowed:raise ClosureError('TRANSFER_FORMAT')
+                      with path.open('xb') as output:
+                          while True:
+                              if time.monotonic()>deadline:raise ClosureError('TRANSFER_DEADLINE')
+                              part=response.read(min(CHUNK,spec['size']-count+1,MAX_TRANSFER-transfer['bytes']+1))
+                              if not part:break
+                              count+=len(part);transfer['bytes']+=len(part)
+                              if count>spec['size'] or transfer['bytes']>MAX_TRANSFER:raise ClosureError('TRANSFER_SIZE')
+                              output.write(part);sha.update(part);published.update(part)
+              except HTTPError as exc:
+                  transfer['http_status']=exc.code;exc.close();raise ClosureError('TRANSFER_HTTP') from None
+              if count!=spec['size']:raise ClosureError('TRANSFER_SIZE')
+              if published.hexdigest()!=spec['digest']:raise ClosureError('TRANSFER_DIGEST')
+              return dict(bytes=count,sha256=sha.hexdigest(),publisher_digest_algorithm=spec['algorithm'],
+                  publisher_digest_match=True,cryptographic_publisher_signature_verified=False,source='OFFICIAL_HTTPS_PINNED_METADATA')
+
+
+          def canonical(name):
+              if not isinstance(name,str) or len(name)>1024 or '\\' in name or '\x00' in name or any(ord(c)<32 or ord(c)==127 for c in name):
+                  raise ClosureError('ARCHIVE_PATH')
+              if name.startswith('./'):name=name[2:]
+              name=name.rstrip('/')
+              if name in ('','.'):
+                  return ''
+              if name.startswith('/') or ':' in name or any(p in ('','.','..') for p in name.split('/')):
+                  raise ClosureError('ARCHIVE_PATH')
+              return name
+
+
+          def stream_hash(stream,size,budget):
+              if not 0<=size<=MAX_MEMBER:raise ClosureError('ARCHIVE_LIMIT')
+              sha=hashlib.sha256();count=0
+              while True:
+                  part=stream.read(min(CHUNK,size-count+1,MAX_OUTPUT-budget[0]+1))
+                  if not part:break
+                  count+=len(part);budget[0]+=len(part)
+                  if count>size or budget[0]>MAX_OUTPUT:raise ClosureError('ARCHIVE_LIMIT')
+                  sha.update(part)
+              if count!=size:raise ClosureError('ARCHIVE_LIMIT')
+              return dict(bytes=count,sha256=sha.hexdigest())
+
+
+          def google_inventory(path):
+              result={};seen=set();declared=0
+              # Whole object digest gate precedes this call. Bound central metadata before ZipFile.
+              with path.open('rb') as f:
+                  f.seek(max(0,path.stat().st_size-65557));tail=f.read(65557)
+              at=tail.rfind(b'PK\x05\x06')
+              if at<0 or len(tail)-at<22:raise ClosureError('ZIP_FORMAT')
+              import struct
+              _,disk,start_disk,on_disk,count,central_size,offset,comment=struct.unpack_from('<4s4H2IH',tail,at)
+              if disk or start_disk or count!=on_disk or count>MAX_ENTRIES or central_size>64_000_000 or offset+central_size>path.stat().st_size or at+22+comment!=len(tail):
+                  raise ClosureError('ZIP_FORMAT')
+              with zipfile.ZipFile(path) as archive:
+                  if len(archive.infolist())!=count:raise ClosureError('ZIP_FORMAT')
+                  for item in archive.infolist():
+                      name=canonical(item.orig_filename)
+                      if name in seen:raise ClosureError('ARCHIVE_DUPLICATE')
+                      seen.add(name);declared+=item.file_size
+                      mode=item.external_attr>>16
+                      if stat.S_IFMT(mode) not in (0,stat.S_IFREG,stat.S_IFDIR):raise ClosureError('ARCHIVE_TYPE')
+                      if item.flag_bits&1 or item.compress_type not in (0,8) or item.file_size>MAX_MEMBER or declared>MAX_OUTPUT:
+                          raise ClosureError('ARCHIVE_LIMIT')
+                      parts=PurePosixPath(name).parts
+                      is_launcher=name=='apksigner' or (len(parts)==2 and parts[1]=='apksigner')
+                      is_jar=name=='lib/apksigner.jar' or (len(parts)==3 and parts[1:]==('lib','apksigner.jar'))
+                      if is_launcher or is_jar:
+                          # Exactly one enclosing folder is allowed, with the SAME prefix.
+                          key='jar' if is_jar else 'launcher'
+                          if key in result:raise ClosureError('ARCHIVE_DUPLICATE')
+                          with archive.open(item) as stream:result[key]=stream_hash(stream,item.file_size,[0])
+                          result[key]['archive_prefix']=parts[0] if (len(parts)==2 if is_launcher else len(parts)==3) else ''
+                  if set(result)!={'launcher','jar'}:raise ClosureError('PACKAGE_TARGET_MISSING')
+                  if result['launcher']['archive_prefix']!=result['jar']['archive_prefix']:raise ClosureError('PACKAGE_LAYOUT')
+              return result
+
+
+          class SliceReader(io.RawIOBase):
+              def __init__(self,file,offset,size):self.file=file;self.offset=offset;self.size=size;self.position=0
+              def readable(self):return True
+              def read(self,n=-1):
+                  if n<0:n=self.size-self.position
+                  n=min(n,self.size-self.position,CHUNK)
+                  self.file.seek(self.offset+self.position);part=self.file.read(n);self.position+=len(part);return part
+              def tell(self):return self.position
+
+
+          class OutputBound(io.RawIOBase):
+              def __init__(self,stream,budget):self.stream=stream;self.budget=budget
+              def readable(self):return True
+              def read(self,n=-1):
+                  if n<0 or n>CHUNK:n=CHUNK
+                  part=self.stream.read(min(n,MAX_OUTPUT-self.budget[0]+1))
+                  self.budget[0]+=len(part)
+                  if self.budget[0]>MAX_OUTPUT:raise ClosureError('ARCHIVE_LIMIT')
+                  return part
+
+
+          def ar_members(file,size):
+              file.seek(0)
+              if file.read(8)!=b'!<arch>\n':raise ClosureError('AR_FORMAT')
+              rows={};pos=8
+              while pos<size:
+                  if len(rows)>=8 or pos+60>size:raise ClosureError('AR_FORMAT')
+                  file.seek(pos);header=file.read(60)
+                  if header[58:]!=b'`\n':raise ClosureError('AR_FORMAT')
+                  name=header[:16].decode('ascii').strip().removesuffix('/')
+                  length=header[48:58].decode('ascii').strip()
+                  if not length.isdecimal() or len(length)>10:raise ClosureError('AR_FORMAT')
+                  n=int(length);start=pos+60
+                  if n>size-start or name in rows:raise ClosureError('AR_FORMAT')
+                  allowed={'debian-binary','_gpgorigin','_gpgbuilder','_gpgmaint'}
+                  if name not in allowed and not re.fullmatch(r'(?:control|data)\.tar(?:\.(?:gz|xz|bz2|zst))?',name):raise ClosureError('AR_FORMAT')
+                  rows[name]=(start,n);pos=start+n
+                  if n%2:
+                      file.seek(pos)
+                      if file.read(1)!=b'\n':raise ClosureError('AR_FORMAT')
+                      pos+=1
+              if pos!=size or 'debian-binary' not in rows:raise ClosureError('AR_FORMAT')
+              file.seek(rows['debian-binary'][0])
+              if rows['debian-binary'][1]!=4 or file.read(4)!=b'2.0\n':raise ClosureError('AR_FORMAT')
+              return rows
+
+
+          def tar_inventory(file,offset,size,name,budget):
+              raw=SliceReader(file,offset,size)
+              if name.endswith('.xz'):decoded=lzma.LZMAFile(raw)
+              elif name.endswith('.gz'):decoded=gzip.GzipFile(fileobj=raw)
+              elif name.endswith('.bz2'):decoded=bz2.BZ2File(raw)
+              elif name.endswith('.tar'):decoded=raw
+              elif name.endswith('.zst'):
+                  try:from compression import zstd
+                  except ImportError:raise ClosureError('COMPRESSION_UNSUPPORTED') from None
+                  decoded=zstd.ZstdFile(raw)
+              else:raise ClosureError('COMPRESSION_UNSUPPORTED')
+              bounded=OutputBound(decoded,budget);headers=[0]
+              class BoundedTarInfo(tarfile.TarInfo):
+                  @classmethod
+                  def frombuf(cls,buf,encoding,errors):
+                      row=super().frombuf(buf,encoding,errors);headers[0]+=1
+                      if headers[0]>MAX_ENTRIES or row.size>MAX_MEMBER:raise ClosureError('ARCHIVE_LIMIT')
+                      if row.type in (tarfile.XHDTYPE,tarfile.XGLTYPE,tarfile.GNUTYPE_LONGNAME,tarfile.GNUTYPE_LONGLINK) and row.size>65536:
+                          raise ClosureError('TAR_METADATA')
+                      return row
+              rows={};declared=0
+              try:
+                  with tarfile.open(fileobj=bounded,mode='r|',tarinfo=BoundedTarInfo) as archive:
+                      for item in archive:
+                          key=canonical(item.name)
+                          if not key:
+                              if not item.isdir():raise ClosureError('ARCHIVE_PATH')
+                              continue
+                          if key in rows:raise ClosureError('ARCHIVE_DUPLICATE')
+                          declared+=item.size
+                          if len(rows)>=MAX_ENTRIES or item.size>MAX_MEMBER or declared>MAX_OUTPUT:raise ClosureError('ARCHIVE_LIMIT')
+                          if item.isfile():
+                              stream=archive.extractfile(item)
+                              if stream is None:raise ClosureError('TAR_FORMAT')
+                              # OutputBound accounts every decompressed byte, including metadata/skips.
+                              with stream:row=stream_hash(stream,item.size,[0])
+                              row['type']='file'
+                          elif item.isdir():row={'type':'directory'}
+                          elif item.issym() or item.islnk():
+                              if not isinstance(item.linkname,str) or len(item.linkname)>4096 or any(ord(c)<32 for c in item.linkname):raise ClosureError('ARCHIVE_PATH')
+                              row=dict(type='symlink' if item.issym() else 'hardlink',target=item.linkname)
+                          else:raise ClosureError('ARCHIVE_TYPE')
+                          rows[key]=row
+                      # Include bytes already buffered by tarfile's streaming reader.
+                      while part:=archive.fileobj.read(CHUNK):
+                          if any(part):raise ClosureError('TAR_TRAILING')
+                  # Consume compression checksum/trailer and reject unparsed nonzero tail.
+                  while part:=bounded.read(CHUNK):
+                      if any(part):raise ClosureError('TAR_TRAILING')
+              finally:
+                  if decoded is not raw:decoded.close()
+              return rows
+
+
+          def deb_inventory(path):
+              with path.open('rb') as file:
+                  members=ar_members(file,path.stat().st_size)
+                  data=[n for n in members if n.startswith('data.tar')];control=[n for n in members if n.startswith('control.tar')]
+                  if len(data)!=1 or len(control)!=1:raise ClosureError('PACKAGE_LAYOUT')
+                  budget=[0]
+                  tar_inventory(file,*members[control[0]],control[0],budget)  # Scripts remain inert bytes.
+                  rows=tar_inventory(file,*members[data[0]],data[0],budget)
+              return rows,dict(member_count=len(rows),decompressed_bytes=budget[0],data_compression=data[0].split('.')[-1])
+
+
+          def virtual_path(text):
+              parts=[]
+              for part in text.split('/'):
+                  if part in ('','.'):continue
+                  if part=='..':
+                      if not parts:raise ClosureError('PACKAGE_LINK_ESCAPE')
+                      parts.pop()
+                  else:parts.append(part)
+              return '/'.join(parts)
+
+
+          def package_resolve(name,rows):
+              name=virtual_path(name)
+              for _ in range(32):
+                  parts=name.split('/');changed=False
+                  for at in range(1,len(parts)+1):
+                      prefix='/'.join(parts[:at]);row=rows.get(prefix)
+                      if row and row['type'] in ('symlink','hardlink'):
+                          target=row['target']
+                          base='' if target.startswith('/') or row['type']=='hardlink' else posixpath.dirname(prefix)
+                          name=virtual_path(base+'/'+target+'/'+('/'.join(parts[at:])))
+                          changed=True;break
+                  if not changed:
+                      row=rows.get(name)
+                      if row is None:raise ClosureError('PACKAGE_TARGET_MISSING')
+                      return name,row
+              raise ClosureError('PACKAGE_LINK_LOOP')
+
+
+          def diagnose_layout():
+              issues=[];count=0
+              def add(code,relative=None):
+                  item={'code':code}
+                  if relative is not None and re.fullmatch('[A-Za-z0-9_.+/-]{1,512}',relative):item['relative_jdk_path']=relative
+                  issues.append(item)
+                  if len(issues)>64:raise ClosureError('ARCHIVE_LIMIT')
+              for directory,dirs,files in os.walk(JDK,followlinks=False,onerror=lambda e:add('TOOLCHAIN_WALK_IO')):
+                  dirs.sort();files.sort()
+                  for name in dirs+files:
+                      count+=1
+                      if count>MAX_ENTRIES:raise ClosureError('ARCHIVE_LIMIT')
+                      path=Path(directory)/name;relative=path.relative_to(JDK).as_posix()
+                      try:
+                          mode=path.lstat().st_mode
+                          if stat.S_ISLNK(mode):
+                              target=path.resolve(strict=True);lexical=Path(os.path.abspath(path.parent/os.readlink(path)))
+                              if not target.is_relative_to(JDK) or not lexical.is_relative_to(JDK):add('TOOLCHAIN_LINK_EXTERNAL',relative)
+                          elif not stat.S_ISREG(mode) and not stat.S_ISDIR(mode):add('TOOLCHAIN_ENTRY_TYPE',relative)
+                      except FileNotFoundError:add('TOOLCHAIN_LINK_BROKEN',relative)
+                      except RuntimeError:add('TOOLCHAIN_LINK_LOOP',relative)
+                      except OSError:add('TOOLCHAIN_LINK_IO',relative)
+              return issues
+
+
+          def runtime_comparison(rows,report):
+              contracts={};expected={}
+              for name,row in rows.items():
+                  if name.startswith(JDK_PREFIX):
+                      relative=name[len(JDK_PREFIX):]
+                      if not relative:continue
+                      expected[relative]=row
+                      if row['type']=='symlink':
+                          try:target,leaf=package_resolve(name,rows)
+                          except ClosureError:continue
+                          if not target.startswith(JDK_PREFIX) and leaf['type']=='file':
+                              # Only publisher-contained static Java configuration/resources.
+                              if target.startswith(('etc/java-17-','etc/temurin-17-','etc/.java/',
+                                      'etc/ssl/certs/java/','usr/lib/jvm/temurin-17-','usr/lib/jvm/openjdk-17/',
+                                      'usr/share/doc/temurin-17-')):
+                                  contracts[relative]=dict(link_text=row['target'],target='/'+target,bytes=leaf['bytes'],sha256=leaf['sha256'],
+                                      review_sha256=PACKAGES['adoptium']['digest'])
+              for issue in report.get('original_policy_layout_findings',[]):
+                  issue['vendor_contract_available']=issue.get('relative_jdk_path') in contracts
+              report['vendor_bound_external_contracts']=contracts
+              observations={};budget=[0]
+              try:
+                  digest=jdk_tree_hash(JDK,budget,external_dependencies=contracts,collect_issues=True,observations=observations)
+                  report['jdk_identity']=dict(status='PASS_DATA_ONLY',sha256=digest,algorithm='firstlight-jdk-tree.v2')
+              except VerificationError as exc:report['jdk_identity']=dict(status='FAIL',**safe_failure(exc))
+              mismatches=[];matched=0
+              for relative,record in observations.items():
+                  if record[0]=='directory':continue
+                  try:
+                      target,vendor=package_resolve(JDK_PREFIX+relative,rows)
+                      if record[0]=='file':same=vendor['type']=='file' and vendor['sha256']==record[3]
+                      elif record[0]=='external-file-link':same=relative in contracts and vendor['sha256']==record[5]
+                      else:same=expected.get(relative,{}).get('type')=='symlink' and expected[relative]['target']==record[2]
+                  except ClosureError:same=False
+                  if same:matched+=1
+                  elif len(mismatches)<64:mismatches.append(dict(relative_jdk_path=relative if re.fullmatch('[A-Za-z0-9_.+/-]{1,512}',relative) else 'REDACTED',code='PACKAGE_CONTENT_MISMATCH'))
+              for relative in sorted(set(expected)-set(observations)):
+                  if expected[relative]['type']!='directory' and len(mismatches)<64:
+                      mismatches.append(dict(relative_jdk_path=relative if re.fullmatch('[A-Za-z0-9_.+/-]{1,512}',relative) else 'REDACTED',code='PACKAGE_TARGET_MISSING'))
+              report['runtime_vendor_comparison']=dict(matched_entries=matched,mismatches=mismatches,
+                  complete_match=not mismatches and report['jdk_identity']['status']=='PASS_DATA_ONLY',installed_bytes_hashed=budget[0])
+
+
+          def cleanup(root,path,run):
+              if path.parent!=root or path.name!='firstlight-toolchain-closure-one' or path.is_symlink() or (path/'.owner').read_text()!=run:
+                  raise ClosureError('CLEANUP_FAILED')
+              shutil.rmtree(path)
+
+
+          def main():
+              report=dict(schema='firstlight-toolchain-closure.v1',run_id=os.environ.get('GITHUB_RUN_ID'),
+                  status='NOT_RUN',tools_executed=False,apk_downloaded=False,secret_accessed=False,
+                  installed=False,execution_authorized=False,cleanup=False,packages={})
+              root=path=None;created=False;alarms=False
+              try:
+                  if not (platform.system()=='Linux' and os.geteuid()!=0 and os.environ.get('GITHUB_REPOSITORY')=='THEFLOLZX/v.1'
+                          and os.environ.get('GITHUB_EVENT_NAME')=='workflow_dispatch' and os.environ.get('GITHUB_RUN_NUMBER')=='1'
+                          and os.environ.get('GITHUB_RUN_ATTEMPT')=='1' and os.environ.get('GITHUB_WORKFLOW_REF')==WORKFLOW_REF):
+                      raise ClosureError('HOST_GUARD')
+                  import resource
+                  resource.setrlimit(resource.RLIMIT_CORE,(0,0));resource.setrlimit(resource.RLIMIT_AS,(1_500_000_000,1_500_000_000))
+                  resource.setrlimit(resource.RLIMIT_FSIZE,(300_000_000,300_000_000));os.umask(0o077)
+                  for sig in (signal.SIGALRM,signal.SIGTERM,signal.SIGINT):signal.signal(sig,interrupted)
+                  alarms=True;signal.alarm(310)
+                  report['stage']='INSTALLED_IDENTITY';budget=[0]
+                  report['image']={key:os.environ.get(key) for key in ('ImageOS','ImageVersion','RUNNER_OS','RUNNER_ARCH')}
+                  report['installed_matches']={}
+                  for label,expected in OBSERVED_FILES.items():
+                      actual=file_hash(Path(expected['path']),budget)
+                      report['installed_matches'][label]=dict(sha256=actual,match=actual==expected['sha256'])
+                      if actual!=expected['sha256']:raise ClosureError('OBSERVED_FILE_CHANGED')
+                  report['stage']='JDK_LAYOUT_METADATA'
+                  report['original_policy_layout_findings']=diagnose_layout()
+                  checkpoint(report)
+                  root=Path(os.environ['RUNNER_TEMP']).resolve(strict=True);path=root/'firstlight-toolchain-closure-one'
+                  if path.exists() or path.is_symlink():raise ClosureError('SCRATCH_EXISTS')
+                  if shutil.disk_usage(root).free<1_000_000_000:raise ClosureError('STORAGE_LIMIT')
+                  path.mkdir(mode=0o700);created=True;(path/'.owner').write_text(os.environ['GITHUB_RUN_ID'])
+                  report['stage']='PUBLISHER_TRANSFER';transfer={'bytes':0};report['transfer']=transfer
+                  for name in ('google','adoptium'):
+                      report['stage']='TRANSFER_'+name.upper()
+                      report['packages'][name]=acquire(name,path/name,transfer);report['downloaded_bytes']=transfer['bytes'];checkpoint(report)
+                  report['stage']='STATIC_PACKAGE_COMPARISON'
+                  google=google_inventory(path/'google')
+                  for key,label in (('launcher','apksigner_launcher'),('jar','apksigner_jar')):
+                      google[key]['installed_match']=google[key]['sha256']==OBSERVED_FILES[label]['sha256']
+                  report['google_payload_comparison']=google;checkpoint(report)
+                  rows,summary=deb_inventory(path/'adoptium');report['adoptium_inventory']=summary
+                  selected={}
+                  for label,expected in OBSERVED_FILES.items():
+                      if not label.startswith('java/'):continue
+                      name='usr/lib/jvm/temurin-17-jdk-amd64/'+label.removeprefix('java/')
+                      try:
+                          _,vendor=package_resolve(name,rows)
+                          selected[label]=dict(vendor_sha256=vendor.get('sha256'),installed_match=vendor.get('sha256')==expected['sha256'])
+                      except ClosureError:selected[label]=dict(installed_match=False,code='PACKAGE_TARGET_MISSING')
+                  report['java_selected_comparison']=selected;checkpoint(report)
+                  report['stage']='RUNTIME_CLOSURE';runtime_comparison(rows,report)
+                  complete=(all(v['installed_match'] for v in google.values()) and all(v['installed_match'] for v in selected.values())
+                      and report['runtime_vendor_comparison']['complete_match'])
+                  report['status']='MATCHED_DATA_ONLY_REVIEW_REQUIRED' if complete else 'UNRESOLVED_DATA_ONLY'
+                  report['stage']='COMPLETE'
+              except BaseException as exc:
+                  report.update(status='STOP',failure=safe_failure(exc) if not isinstance(exc,Interrupted) else {'code':'INTERRUPTED'})
+              finally:
+                  if alarms:signal.alarm(0)
+                  if created:
+                      try:cleanup(root,path,os.environ['GITHUB_RUN_ID']);report['cleanup']=True
+                      except BaseException:report.update(cleanup=False,cleanup_failure='CLEANUP_FAILED')
+                  checkpoint(report)
+              return 0 if report['status']=='MATCHED_DATA_ONLY_REVIEW_REQUIRED' and report['cleanup'] else 1
+
+
+          if __name__=='__main__':raise SystemExit(main())
+          FIRSTLIGHT_CLOSURE
+      - name: Remove this run's temporary packages after failure or cancellation
+        if: ${{ always() }}
+        shell: bash --noprofile --norc -e {0}
+        run: |
+          python3 -I -B - <<'FIRSTLIGHT_CLEAN'
+          import json,os,shutil
+          from pathlib import Path
+          try:
+              root=Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
+              p=root/'firstlight-toolchain-closure-one'
+              if p.exists():
+                  if p.is_symlink() or p.parent!=root or (p/'.owner').read_text()!=os.environ['GITHUB_RUN_ID']:
+                      raise ValueError()
+                  shutil.rmtree(p)
+              print(json.dumps({'fallback_cleanup_complete':not p.exists()}))
+          except BaseException:
+              print(json.dumps({'fallback_cleanup_complete':False,'failure':'CLEANUP_FAILED'}))
+              raise SystemExit(1)
+          FIRSTLIGHT_CLEAN
