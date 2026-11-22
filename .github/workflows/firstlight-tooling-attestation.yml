@@ -4,7 +4,7 @@ on:
 permissions: {}
 jobs:
   attest:
-    if: github.repository == 'THEFLOLZX/v.1' && github.run_number == 1 && github.run_attempt == 1
+    if: github.repository == 'THEFLOLZX/v.1' && github.run_number == 2 && github.run_attempt == 1
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -65,15 +65,23 @@ jobs:
               return digest.hexdigest()
 
           SDK=Path('/usr/local/lib/android/sdk/build-tools/36.1.0')
+          AUTHORIZED_RUN_NUMBER='2'  # Run1 consumed44995245625. Local repair, NOT dispatch approval.
           WORKFLOW_REF='THEFLOLZX/v.1/.github/workflows/firstlight-tooling-attestation.yml@refs/heads/main'
           META_LIMIT=262144
           RELEASE_KEYS=('JAVA_VERSION','JAVA_RUNTIME_VERSION','IMPLEMENTOR','IMPLEMENTOR_VERSION',
                         'JAVA_VERSION_DATE','OS_ARCH','OS_NAME','SOURCE','BUILD_SOURCE','FULL_VERSION')
+          METADATA_FAILURES=frozenset(('META_SYMLINK','META_MISSING','META_SIZE','META_GREW','META_OS_LINK_DESTINATION'))
+
+
+          class MetadataError(ValueError):
+              def __init__(self,code):
+                  if code not in METADATA_FAILURES:raise ValueError('Unknown fixed metadata code')
+                  self.code=code;super().__init__(code)
 
 
           def fixed_error(exc):
               code=getattr(exc,'code',None)
-              return code if type(code) is str and code in FAILURES else 'ATTESTATION_READ_REJECTED'
+              return code if type(code) is str and code in FAILURES|METADATA_FAILURES else 'ATTESTATION_READ_REJECTED'
 
 
           def public_text(value,maximum=512):
@@ -93,11 +101,20 @@ jobs:
 
 
           def read_metadata(path):
-              if path.is_symlink() or not path.is_file() or path.stat().st_size>META_LIMIT:
-                  raise ValueError('Metadata layout')
+              if path.is_symlink():raise MetadataError('META_SYMLINK')
+              if not path.is_file():raise MetadataError('META_MISSING')
+              if path.stat().st_size>META_LIMIT:raise MetadataError('META_SIZE')
               with path.open('rb') as stream:data=stream.read(META_LIMIT+1)
-              if len(data)>META_LIMIT:raise ValueError('Metadata grew')
+              if len(data)>META_LIMIT:raise MetadataError('META_GREW')
               return data
+
+
+          def os_metadata():
+              path=Path('/etc/os-release')
+              if path.is_symlink():
+                  path=path.resolve(strict=True)
+                  if path!=Path('/usr/lib/os-release'):raise MetadataError('META_OS_LINK_DESTINATION')
+              return text_fields(read_metadata(path),('NAME','VERSION','VERSION_ID','PRETTY_NAME'))
 
 
           def java_path(raw):
@@ -202,7 +219,7 @@ jobs:
                   if not (platform.system()=='Linux' and os.geteuid()!=0
                           and os.environ.get('GITHUB_REPOSITORY')=='THEFLOLZX/v.1'
                           and os.environ.get('GITHUB_EVENT_NAME')=='workflow_dispatch'
-                          and os.environ.get('GITHUB_RUN_NUMBER')=='1'
+                          and os.environ.get('GITHUB_RUN_NUMBER')==AUTHORIZED_RUN_NUMBER
                           and os.environ.get('GITHUB_RUN_ATTEMPT')=='1'
                           and os.environ.get('GITHUB_WORKFLOW_REF')==WORKFLOW_REF):
                       raise ValueError('One bounded nonroot cloud run only')
@@ -213,9 +230,17 @@ jobs:
                   for sig in (signal.SIGALRM,signal.SIGTERM,signal.SIGINT):signal.signal(sig,interrupted)
                   signal.alarm(100)
                   report['image']={key:public_text(os.environ.get(key)) for key in ('ImageOS','ImageVersion','ImageRelease','RUNNER_OS','RUNNER_ARCH')}
-                  report['os_release']=text_fields(read_metadata(Path('/etc/os-release')),('NAME','VERSION','VERSION_ID','PRETTY_NAME'))
+                  release=os.environ.get('ImageRelease','')
+                  if re.fullmatch(r'https://github.com/actions/runner-images/releases/tag/[A-Za-z0-9_./%+-]{1,160}',release):
+                      report['image']['ImageRelease']=release
                   report['python_version']=platform.python_version()
                   collect(report)
+                  # Optional OS metadata must NEVER prevent the primary tooling evidence.
+                  try:
+                      report['os_release']=os_metadata()
+                      report['checks']['os_release']={'status':'PASS_DATA_ONLY'}
+                  except Exception as exc:
+                      report['checks']['os_release']={'status':'FAIL','code':fixed_error(exc)}
                   report['status']='COMPLETE_DATA_ONLY' if all(v['status']=='PASS_DATA_ONLY' for v in report['checks'].values()) else 'PARTIAL_DATA_ONLY'
               except BaseException as exc:
                   report.update(status='STOP',failure='INTERRUPTED' if isinstance(exc,Interrupted) else fixed_error(exc))
