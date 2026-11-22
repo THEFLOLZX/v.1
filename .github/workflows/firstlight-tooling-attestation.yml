@@ -1,0 +1,231 @@
+name: FirstLight TOOLING ATTESTATION ONE RUN
+on:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  attest:
+    if: github.repository == 'THEFLOLZX/v.1' && github.run_number == 1 && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Read and hash installed tooling only
+        shell: bash --noprofile --norc -e {0}
+        run: |
+          timeout --signal=TERM --kill-after=1s 110s python3 -I -B - <<'FIRSTLIGHT_TOOLING'
+          """One authorized cloud-only DATA inspection. Never executes inspected tools.
+
+          No network, secrets, subprocesses, installations, APKs or artifacts. On Windows
+          the main entry point refuses to run. Local tests use invented temporary files.
+          """
+          import hashlib
+          import json
+          import os
+          FAILURES = frozenset('''TOOLCHAIN_NOT_REVIEWED TOOLCHAIN_IDENTITY_MISMATCH
+          TOOLCHAIN_LAYOUT TOOLCHAIN_LIMIT SIGNATURE_REJECTED SIGNATURE_OUTPUT_REJECTED
+          STATIC_BRANCH_REJECTED CONTENT_IDENTITY_MISMATCH'''.split())
+          class VerificationError(ValueError):
+              def __init__(self, code):
+                  if code not in FAILURES:raise ValueError('Unknown fixed code')
+                  self.code=code
+                  super().__init__(code)
+          def file_hash(path, budget, limit=512_000_000):
+              if path.is_symlink() or not path.is_file() or path.stat().st_size>limit:
+                  raise VerificationError('TOOLCHAIN_LAYOUT')
+              sha=hashlib.sha256();count=0
+              with path.open('rb') as stream:
+                  while part:=stream.read(1024*1024):
+                      count+=len(part);budget[0]+=len(part)
+                      if count>limit or budget[0]>1_000_000_000:raise VerificationError('TOOLCHAIN_LIMIT')
+                      sha.update(part)
+              return sha.hexdigest()
+          def jdk_tree_hash(root,budget):
+              """Bind runtime, providers, configuration and libraries, not just bin/java."""
+              digest=hashlib.sha256();count=0
+              for directory,dirs,files in os.walk(root,followlinks=False):
+                  dirs.sort();files.sort()
+                  for name in dirs+files:
+                      path=Path(directory)/name;relative=path.relative_to(root).as_posix()
+                      count+=1
+                      if count>20000:raise VerificationError('TOOLCHAIN_LIMIT')
+                      mode=path.lstat().st_mode
+                      if stat.S_ISLNK(mode):
+                          target=path.resolve(strict=True)
+                          if not target.is_relative_to(root):raise VerificationError('TOOLCHAIN_LAYOUT')
+                          record=['link',relative,os.readlink(path)]
+                      elif stat.S_ISREG(mode):record=['file',relative,mode&0o777,file_hash(path,budget)]
+                      elif stat.S_ISDIR(mode):record=['directory',relative,mode&0o777]
+                      else:raise VerificationError('TOOLCHAIN_LAYOUT')
+                      digest.update(json.dumps(record,ensure_ascii=True,separators=(',',':')).encode()+b'\n')
+              return digest.hexdigest()
+          import platform
+          import re
+          import signal
+          import stat
+          import zipfile
+          from integrations.firstlight.execution.signature_base_verification import (
+              file_hash, jdk_tree_hash, VerificationError, FAILURES)
+
+          SDK=Path('/usr/local/lib/android/sdk/build-tools/36.1.0')
+          WORKFLOW_REF='THEFLOLZX/v.1/.github/workflows/firstlight-tooling-attestation.yml@refs/heads/main'
+          META_LIMIT=262144
+          RELEASE_KEYS=('JAVA_VERSION','JAVA_RUNTIME_VERSION','IMPLEMENTOR','IMPLEMENTOR_VERSION',
+                        'JAVA_VERSION_DATE','OS_ARCH','OS_NAME','SOURCE','BUILD_SOURCE','FULL_VERSION')
+
+
+          def fixed_error(exc):
+              code=getattr(exc,'code',None)
+              return code if type(code) is str and code in FAILURES else 'ATTESTATION_READ_REJECTED'
+
+
+          def public_text(value,maximum=512):
+              return value if isinstance(value,str) and re.fullmatch(r'[A-Za-z0-9 ._:/+@=,;()\[\]-]{1,'+str(maximum)+'}',value) else None
+
+
+          def text_fields(data,keys):
+              if len(data)>META_LIMIT:raise ValueError('Metadata bound')
+              result={}
+              for line in data.decode('utf-8').splitlines():
+                  key,sep,value=line.partition('=')
+                  if sep and key in keys:
+                      value=value.strip().strip('"')
+                      if key in result:raise ValueError('Duplicate metadata')
+                      result[key]=public_text(value,2048)
+              return result
+
+
+          def read_metadata(path):
+              if path.is_symlink() or not path.is_file() or path.stat().st_size>META_LIMIT:
+                  raise ValueError('Metadata layout')
+              with path.open('rb') as stream:data=stream.read(META_LIMIT+1)
+              if len(data)>META_LIMIT:raise ValueError('Metadata grew')
+              return data
+
+
+          def java_path(raw):
+              if not isinstance(raw,str) or not re.fullmatch(r'/[A-Za-z0-9_./+-]{1,300}',raw):
+                  raise ValueError('Unreviewed runtime path')
+              path=Path(raw)
+              real=path.resolve(strict=True)
+              allowed=('/usr/lib/jvm/','/opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/')
+              if not any(str(real).startswith(prefix) for prefix in allowed):
+                  raise ValueError('Runtime outside allowed roots')
+              if not real.is_dir():raise ValueError('Runtime root')
+              return real
+
+
+          def file_record(path,budget):
+              return dict(path=str(path),bytes=path.stat().st_size,sha256=file_hash(path,budget))
+
+
+          def jar_claims(path):
+              # Hashing/ZIP reading only. Never classloads or imports JAR classes/providers.
+              if path.is_symlink() or not path.is_file() or path.stat().st_size>512_000_000:
+                  raise ValueError('Jar layout')
+              with zipfile.ZipFile(path) as jar:
+                  entries=jar.infolist()
+                  if len(entries)>20000:raise ValueError('Jar count bound')
+                  manifests=[i for i in entries if i.filename=='META-INF/MANIFEST.MF']
+                  if len(manifests)!=1 or manifests[0].file_size>65536 or manifests[0].flag_bits&1:
+                      raise ValueError('Jar manifest bound')
+                  with jar.open(manifests[0]) as member:data=member.read(65537)
+                  if len(data)>65536:raise ValueError('Jar manifest stream bound')
+                  fields={}
+                  for line in data.decode('utf-8').splitlines():
+                      name,sep,value=line.partition(': ')
+                      if sep and name in ('Manifest-Version','Main-Class','Class-Path','Created-By','Build-Jdk','Build-Jdk-Spec','Premain-Class','Agent-Class'):
+                          if name in fields:raise ValueError('Duplicate manifest field')
+                          fields[name]=public_text(value,2048)
+                  return dict(entry_count=len(entries),manifest_sha256=hashlib.sha256(data).hexdigest(),
+                      manifest_fields=fields,
+                      conscrypt_entry_count=sum('conscrypt' in i.filename.lower() for i in entries),
+                      native_library_entry_count=sum(i.filename.endswith(('.so','.dll','.dylib')) for i in entries),
+                      manifest_continuation_present=any(line.startswith(' ') for line in data.decode('utf-8').splitlines()),
+                      tool_executed=False)
+
+
+          def collect(report,sdk=SDK,java_raw=None):
+              budget=[0]
+              report['files']={}
+              def attempt(label,operation):
+                  out=report.setdefault('checks',{}).setdefault(label,{'status':'RUNNING'})
+                  try:out.update(status='PASS_DATA_ONLY',findings=operation())
+                  except Exception as exc:out.update(status='FAIL',code=fixed_error(exc))
+                  print(json.dumps({'schema':'firstlight-tooling-attestation.partial.v1','check':label,'result':out},sort_keys=True),flush=True)
+
+              def record(name,path):
+                  root=sdk if not name.startswith('java/') else Path(report['java_home'])
+                  if not path.resolve(strict=True).is_relative_to(root.resolve(strict=True)):
+                      raise ValueError('File outside tooling root')
+                  facts=file_record(path,budget);report['files'][name]=facts;return facts
+              attempt('launcher',lambda:record('apksigner_launcher',sdk/'apksigner'))
+              attempt('jar',lambda:record('apksigner_jar',sdk/'lib/apksigner.jar'))
+              def launcher():
+                  data=read_metadata(sdk/'apksigner')
+                  text=data.decode('utf-8')
+                  return dict(bytes=len(data),source_sha256=hashlib.sha256(data).hexdigest(),
+                      references_java_home='JAVA_HOME' in text,references_java_opts='JAVA_OPTS' in text,
+                      references_jar='apksigner.jar' in text,source_executed=False)
+              attempt('launcher_source_metadata',launcher)
+              attempt('jar_metadata',lambda:jar_claims(sdk/'lib/apksigner.jar'))
+              for name in ('source.properties','package.xml'):
+                  attempt('sdk_'+name.replace('.','_'),lambda name=name:record(name,sdk/name))
+              attempt('sdk_version',lambda:text_fields(read_metadata(sdk/'source.properties'),('Pkg.Revision','Pkg.Path','Pkg.Desc')))
+              def runtime():
+                  home=java_path(java_raw if java_raw is not None else os.environ.get('JAVA_HOME_17_X64',os.environ.get('JAVA_HOME')))
+                  report['java_home']=str(home)
+                  release=read_metadata(home/'release')
+                  report['java_release']=text_fields(release,RELEASE_KEYS)
+                  report['java_release_sha256']=hashlib.sha256(release).hexdigest()
+                  return dict(java_home=str(home),release=report['java_release'],version_executed=False)
+              attempt('java_release',runtime)
+              if 'java_home' in report:
+                  home=Path(report['java_home'])
+                  for name in ('bin/java','lib/server/libjvm.so','lib/modules','conf/security/java.security','release'):
+                      attempt('java_'+name.replace('/','_').replace('.','_'),lambda name=name:record('java/'+name,home/name))
+                  attempt('jdk_tree',lambda:dict(sha256=jdk_tree_hash(home,budget),algorithm='firstlight-jdk-tree.v1',
+                      root=str(home),hashes_runtime_providers_and_configuration=True,symlinks_outside_tree_rejected=True))
+              report['bytes_hashed']=budget[0]
+
+
+          class Interrupted(BaseException):pass
+
+
+          def interrupted(*args):raise Interrupted()
+
+
+          def main():
+              report=dict(schema='firstlight-tooling-attestation.v1',status='NOT_RUN',
+                  run_id=os.environ.get('GITHUB_RUN_ID'),run_attempt=os.environ.get('GITHUB_RUN_ATTEMPT'),
+                  tools_executed=False,apk_downloaded=False,secret_accessed=False,network_requests=0,
+                  installations=0,artifacts_created=False,independent_distribution_hash_match=False,
+                  publisher_authenticated=False,consolidated_intake_authorized=False)
+              try:
+                  if not (platform.system()=='Linux' and os.geteuid()!=0
+                          and os.environ.get('GITHUB_REPOSITORY')=='THEFLOLZX/v.1'
+                          and os.environ.get('GITHUB_EVENT_NAME')=='workflow_dispatch'
+                          and os.environ.get('GITHUB_RUN_NUMBER')=='1'
+                          and os.environ.get('GITHUB_RUN_ATTEMPT')=='1'
+                          and os.environ.get('GITHUB_WORKFLOW_REF')==WORKFLOW_REF):
+                      raise ValueError('One bounded nonroot cloud run only')
+                  import resource
+                  resource.setrlimit(resource.RLIMIT_CORE,(0,0))
+                  resource.setrlimit(resource.RLIMIT_AS,(1_500_000_000,1_500_000_000))
+                  resource.setrlimit(resource.RLIMIT_FSIZE,(0,0))  # This probe never writes files.
+                  for sig in (signal.SIGALRM,signal.SIGTERM,signal.SIGINT):signal.signal(sig,interrupted)
+                  signal.alarm(100)
+                  report['image']={key:public_text(os.environ.get(key)) for key in ('ImageOS','ImageVersion','ImageRelease','RUNNER_OS','RUNNER_ARCH')}
+                  report['os_release']=text_fields(read_metadata(Path('/etc/os-release')),('NAME','VERSION','VERSION_ID','PRETTY_NAME'))
+                  report['python_version']=platform.python_version()
+                  collect(report)
+                  report['status']='COMPLETE_DATA_ONLY' if all(v['status']=='PASS_DATA_ONLY' for v in report['checks'].values()) else 'PARTIAL_DATA_ONLY'
+              except BaseException as exc:
+                  report.update(status='STOP',failure='INTERRUPTED' if isinstance(exc,Interrupted) else fixed_error(exc))
+              finally:
+                  if platform.system()=='Linux':signal.alarm(0)
+                  print(json.dumps(report,sort_keys=True),flush=True)
+              return 0 if report['status']=='COMPLETE_DATA_ONLY' else 1
+
+
+          if __name__=='__main__':raise SystemExit(main())
+          FIRSTLIGHT_TOOLING
+
