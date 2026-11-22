@@ -345,4 +345,3 @@ jobs:
               print(json.dumps({'fallback_cleanup_complete':False,'failure':'CLEANUP_DETAILS_REDACTED'}))
               raise SystemExit(1)
           FIRSTLIGHT_CLEAN
-
