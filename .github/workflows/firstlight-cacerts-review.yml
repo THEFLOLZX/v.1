@@ -1,0 +1,290 @@
+name: FirstLight FINAL CACERTS READ ONLY ONE RUN
+on:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  inspect:
+    if: github.repository == 'THEFLOLZX/v.1' && github.ref == 'refs/heads/main' && github.run_number == 1 && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Inspect pinned runtime metadata without execution or downloads
+        shell: bash --noprofile --norc -e {0}
+        run: |
+          timeout --signal=TERM --kill-after=1s 110s python3 -I -B - <<'FIRSTLIGHT_CACERTS'
+          """One cloud-only metadata pass. No network, extraction or tool execution."""
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import posixpath
+          import re
+          import signal
+          import stat
+          import zipfile
+          FAILURES = frozenset('''TOOLCHAIN_NOT_REVIEWED TOOLCHAIN_IDENTITY_MISMATCH
+          TOOLCHAIN_LAYOUT TOOLCHAIN_LIMIT SIGNATURE_REJECTED SIGNATURE_OUTPUT_REJECTED
+          STATIC_BRANCH_REJECTED CONTENT_IDENTITY_MISMATCH
+          TOOLCHAIN_FILE_SYMLINK TOOLCHAIN_FILE_MISSING TOOLCHAIN_FILE_TYPE TOOLCHAIN_FILE_SIZE
+          TOOLCHAIN_FILE_CHANGED TOOLCHAIN_FILE_IO TOOLCHAIN_ROOT_MISSING TOOLCHAIN_ROOT_TYPE
+          TOOLCHAIN_ROOT_SYMLINK TOOLCHAIN_ROOT_IO TOOLCHAIN_WALK_IO TOOLCHAIN_ENTRY_IO
+          TOOLCHAIN_ENTRY_TYPE TOOLCHAIN_LINK_EXTERNAL TOOLCHAIN_LINK_BROKEN TOOLCHAIN_LINK_LOOP
+          TOOLCHAIN_LINK_IO TOOLCHAIN_LINK_TARGET_TYPE TOOLCHAIN_EXTERNAL_POLICY
+          TOOLCHAIN_EXTERNAL_IDENTITY TOOLCHAIN_EXTERNAL_UNUSED TOOLCHAIN_TREE_CHANGED
+          TOOLCHAIN_TREE_INCOMPLETE TOOLCHAIN_ROOT_PATH TOOLCHAIN_JAR_MANIFEST
+          TOOLCHAIN_JAR_DEPENDENCY TOOLCHAIN_JAR_FORMAT TOOLCHAIN_LINK_TRAVERSAL
+          TOOLCHAIN_JAR_SIGNED_METADATA'''.split())
+          class VerificationError(ValueError):
+              def __init__(self, code, *, relative_path=None, entry_index=None, declared_bytes=None):
+                  if code not in FAILURES:raise ValueError('Unknown fixed code')
+                  self.code=code
+                  self.counters={key:value for key,value in (('entry_index',entry_index),('declared_bytes',declared_bytes))
+                      if type(value) is int and 0<=value<2**63}
+                  self.relative_path=(relative_path if isinstance(relative_path,str)
+                      and re.fullmatch(r'[A-Za-z0-9_.+/-]{1,512}',relative_path)
+                      and not relative_path.startswith('/')
+                      and not any(part in ('','.','..') for part in relative_path.split('/')) else None)
+                  super().__init__(code)
+
+              def safe_detail(self):
+                  result=dict(code=self.code,counters=dict(self.counters))
+                  if self.relative_path is not None:result['relative_jdk_path']=self.relative_path
+                  return result
+          def file_hash(path, budget, limit=512_000_000):
+              """Read regular files only; refuse symlinks, races, missing files and growth."""
+              try:before=path.lstat()
+              except FileNotFoundError:raise VerificationError('TOOLCHAIN_FILE_MISSING') from None
+              except OSError:raise VerificationError('TOOLCHAIN_FILE_IO') from None
+              if stat.S_ISLNK(before.st_mode):raise VerificationError('TOOLCHAIN_FILE_SYMLINK')
+              if not stat.S_ISREG(before.st_mode):raise VerificationError('TOOLCHAIN_FILE_TYPE')
+              if before.st_size>limit:raise VerificationError('TOOLCHAIN_FILE_SIZE',declared_bytes=before.st_size)
+              sha=hashlib.sha256();count=0
+              def identity(info):
+                  return (info.st_dev,info.st_ino,info.st_mode,info.st_size,info.st_mtime_ns,info.st_ctime_ns)
+              try:
+                  flags=os.O_RDONLY|getattr(os,'O_BINARY',0)|getattr(os,'O_NOFOLLOW',0)|getattr(os,'O_NONBLOCK',0)
+                  fd=os.open(path,flags)
+                  with os.fdopen(fd,'rb') as stream:
+                      opened=identity(os.fstat(stream.fileno()))
+                      # Windows lstat/fstat timestamp caches can differ immediately after
+                      # fixture writes. Linux execution retains the full cross-API check.
+                      if opened[:4]!=identity(before)[:4] or (os.name!='nt' and opened!=identity(before)):
+                          raise VerificationError('TOOLCHAIN_FILE_CHANGED')
+                      while part:=stream.read(min(1024*1024,limit-count+1,1_000_000_000-budget[0]+1)):
+                          count+=len(part);budget[0]+=len(part)
+                          if count>limit or budget[0]>1_000_000_000:raise VerificationError('TOOLCHAIN_LIMIT')
+                          sha.update(part)
+                      if count!=before.st_size or identity(os.fstat(stream.fileno()))!=opened:
+                          raise VerificationError('TOOLCHAIN_FILE_CHANGED')
+                  final=identity(path.lstat())
+                  if final[:4]!=opened[:4] or (os.name!='nt' and final!=opened):
+                      raise VerificationError('TOOLCHAIN_FILE_CHANGED')
+              except FileNotFoundError:raise VerificationError('TOOLCHAIN_FILE_MISSING') from None
+              except OSError:raise VerificationError('TOOLCHAIN_FILE_IO') from None
+              return sha.hexdigest()
+
+          JDK=Path('/usr/lib/jvm/temurin-17-jdk-amd64')
+          SDK=Path('/usr/local/lib/android/sdk/build-tools/36.1.0')
+          WORKFLOW_REF='THEFLOLZX/v.1/.github/workflows/firstlight-cacerts-review.yml@refs/heads/main'
+          PINS={'apksigner_jar': {'bytes': 1109763, 'path': '/usr/local/lib/android/sdk/build-tools/36.1.0/lib/apksigner.jar', 'sha256': '71e18adf733f5e112d1f062dbe6b0c2eb439a4d7c773d083c42a703c66f56df1'}, 'apksigner_launcher': {'bytes': 2959, 'path': '/usr/local/lib/android/sdk/build-tools/36.1.0/apksigner', 'sha256': 'b47549e373b895ce6ca620d0c7887e674d9615ffa837a86ac601dcfd04adb0f0'}, 'java/bin/java': {'bytes': 16320, 'path': '/usr/lib/jvm/temurin-17-jdk-amd64/bin/java', 'sha256': 'a2195ae9f8a91b82f53df7e1d1b9a650937ebbabbf67d0240c6378b4fbd9990b'}, 'java/conf/security/java.security': {'bytes': 68727, 'path': '/usr/lib/jvm/temurin-17-jdk-amd64/conf/security/java.security', 'sha256': '7c38ec0b34fc844b327e364e86c8f3558e8522ac42dda06e8961858b48a073e1'}, 'java/lib/modules': {'bytes': 130545348, 'path': '/usr/lib/jvm/temurin-17-jdk-amd64/lib/modules', 'sha256': 'fcdfc72acc1ec5e8542fc2170c587ef23edbbdeddcbf435f169d270e02469d7c'}, 'java/lib/server/libjvm.so': {'bytes': 24062032, 'path': '/usr/lib/jvm/temurin-17-jdk-amd64/lib/server/libjvm.so', 'sha256': '9a00b72837fd20c9450cf113ef6526af174cac87d4746b1713de26f1103d0b68'}, 'java/release': {'bytes': 1627, 'path': '/usr/lib/jvm/temurin-17-jdk-amd64/release', 'sha256': '9568390645661374febde48f3c7a019f21cb116d6e4c627de29c119aa7bd0efc'}}
+          ALLOWED_TARGETS=frozenset(('/etc/ssl/certs/adoptium/cacerts','/etc/ssl/certs/java/cacerts'))
+          PACKAGES=('adoptium-ca-certificates','ca-certificates-java','ca-certificates','temurin-17-jdk')
+          CODES=frozenset('HOST_GUARD IDENTITY_CHANGED LINK_EXPECTED LINK_TARGET_UNREVIEWED LINK_DEPTH LINK_PARENT_TYPE TARGET_TYPE TARGET_LIMIT READ_CHANGED READ_LIMIT JAR_FORMAT CONFIG_FORMAT IO_REDACTED INTERRUPTED'.split())
+
+
+          class ReviewError(ValueError):
+              def __init__(self,code):
+                  if code not in CODES:raise ValueError('Unknown code')
+                  self.code=code;super().__init__(code)
+
+
+          def checkpoint(report):print(json.dumps(report,sort_keys=True),flush=True)
+
+
+          def interrupted(*args):raise ReviewError('INTERRUPTED')
+
+
+          def bounded_file(path,limit):
+              """No symlink, special file, growth or cross-open substitution accepted."""
+              before=path.lstat()
+              if not stat.S_ISREG(before.st_mode):raise ReviewError('TARGET_TYPE')
+              if before.st_size>limit:raise ReviewError('READ_LIMIT')
+              flags=os.O_RDONLY|getattr(os,'O_NOFOLLOW',0)|getattr(os,'O_NONBLOCK',0)|getattr(os,'O_BINARY',0)
+              def ident(s):return(s.st_dev,s.st_ino,s.st_mode,s.st_size,s.st_mtime_ns,s.st_ctime_ns)
+              with os.fdopen(os.open(path,flags),'rb') as stream:
+                  opened=os.fstat(stream.fileno())
+                  if ident(opened)[:4]!=ident(before)[:4] or (os.name!='nt' and ident(opened)!=ident(before)):
+                      raise ReviewError('READ_CHANGED')
+                  data=stream.read(limit+1)
+                  after=os.fstat(stream.fileno())
+              if len(data)>limit:raise ReviewError('READ_LIMIT')
+              final=path.lstat()
+              if (len(data)!=before.st_size or ident(opened)!=ident(after)
+                      or ident(final)[:4]!=ident(opened)[:4]
+                      or (os.name!='nt' and ident(final)!=ident(opened))):
+                  raise ReviewError('READ_CHANGED')
+              return data
+
+
+          def ordinary_parents(path):
+              for parent in reversed(path.parents):
+                  if not stat.S_ISDIR(parent.lstat().st_mode):raise ReviewError('LINK_PARENT_TYPE')
+
+
+          def inspect_link(link,allowed):
+              ordinary_parents(link)
+              if not stat.S_ISLNK(link.lstat().st_mode):raise ReviewError('LINK_EXPECTED')
+              origin=os.readlink(link);current=link;chain=[]
+              for _ in range(8):
+                  ordinary_parents(current)
+                  before=current.lstat()
+                  if not stat.S_ISLNK(before.st_mode):
+                      if not stat.S_ISREG(before.st_mode):raise ReviewError('TARGET_TYPE')
+                      data=bounded_file(current,2_000_000)
+                      if os.readlink(link)!=origin:raise ReviewError('READ_CHANGED')
+                      return dict(symlink=str(link),chain=chain,resolved_target=str(current),
+                          target_type='regular_file',bytes=len(data),sha256=hashlib.sha256(data).hexdigest(),
+                          publisher_authenticated=False)
+                  raw=os.readlink(current)
+                  target=posixpath.normpath(raw if raw.startswith('/') else posixpath.join(str(current.parent),raw))
+                  if target not in allowed:raise ReviewError('LINK_TARGET_UNREVIEWED')
+                  chain.append(dict(path=str(current),target=target))
+                  current=Path(target)
+              raise ReviewError('LINK_DEPTH')
+
+
+          def provider_configuration(data):
+              if len(data)>131072:raise ReviewError('READ_LIMIT')
+              try:text=data.decode('utf-8')
+              except UnicodeError:raise ReviewError('CONFIG_FORMAT') from None
+              logical=[];pending=''
+              for line in text.splitlines():
+                  stripped=line.lstrip()
+                  if not pending and (not stripped or stripped.startswith(('#','!'))):continue
+                  pending+=stripped
+                  if len(pending)-len(pending.rstrip('\\')) & 1:
+                      pending=pending[:-1];continue
+                  logical.append(pending);pending=''
+              if pending:raise ReviewError('CONFIG_FORMAT')
+              props={}
+              for line in logical:
+                  key,sep,value=line.partition('=')
+                  key=key.strip();value=value.strip()
+                  if not sep or key in props:raise ReviewError('CONFIG_FORMAT')
+                  props[key]=value
+              providers=[]
+              for key,value in props.items():
+                  if re.fullmatch(r'security\.provider\.[0-9]{1,2}',key):
+                      if not re.fullmatch(r'[A-Za-z0-9_. ${}/-]{1,256}',value):raise ReviewError('CONFIG_FORMAT')
+                      providers.append(dict(order=int(key.rsplit('.',1)[1]),value=value))
+              settings={}
+              for key in ('jdk.certpath.disabledAlgorithms','jdk.jar.disabledAlgorithms','crypto.policy',
+                      'security.overridePropertiesFile','security.useSystemPropertiesFile','keystore.type'):
+                  value=props.get(key)
+                  if value is not None:
+                      if not re.fullmatch(r'[A-Za-z0-9_., &<>/=+\-]{1,4096}',value):raise ReviewError('CONFIG_FORMAT')
+                      settings[key]=value
+              return dict(providers=sorted(providers,key=lambda row:row['order']),settings=settings,
+                  additional_property_sources_declared=any(k.startswith(('security.systemProperties','security.properties')) for k in props),
+                  truststore_access_observed=False,static_review_only=True)
+
+
+          def jar_metadata(path):
+              with zipfile.ZipFile(path) as jar:
+                  items=jar.infolist()
+                  if len(items)>20000:raise ReviewError('JAR_FORMAT')
+                  manifests=[i for i in items if i.filename=='META-INF/MANIFEST.MF']
+                  if len(manifests)!=1 or manifests[0].file_size>65536 or manifests[0].flag_bits&1:
+                      raise ReviewError('JAR_FORMAT')
+                  with jar.open(manifests[0]) as stream:data=stream.read(65537)
+                  if len(data)>65536:raise ReviewError('JAR_FORMAT')
+                  signed=0
+                  for item in items:
+                      name=item.filename.upper()
+                      if name.startswith('META-INF/'):
+                          leaf=name[len('META-INF/'):]
+                          if '/' not in leaf and (leaf.endswith(('.SF','.RSA','.DSA','.EC')) or leaf.startswith('SIG-')):signed+=1
+                  return dict(entry_count=len(items),manifest_sha256=hashlib.sha256(data).hexdigest(),
+                      signature_metadata_count=signed,native_library_member_count=sum(i.filename.lower().endswith(('.so','.dll','.dylib')) for i in items),
+                      classpath_or_agent_declared=any(k in data.lower() for k in (b'class-path:',b'premain-class:',b'agent-class:')),
+                      conscrypt_entries=sum('conscrypt' in i.filename.lower() for i in items),classes_loaded=False)
+
+
+          def provenance(target):
+              result=[]
+              for package in PACKAGES:
+                  base=Path('/var/lib/dpkg/info')/package
+                  row=dict(package=package,owner_list_contains_target=False,independent_publisher_authentication=False)
+                  for suffix in ('.list','.md5sums','.postinst'):
+                      path=Path(str(base)+suffix)
+                      if not path.exists():continue
+                      data=bounded_file(path,512000)
+                      row[suffix[1:]+'_sha256']=hashlib.sha256(data).hexdigest()
+                      lines=data.decode('utf-8',errors='replace').splitlines()
+                      if suffix=='.list':row['owner_list_contains_target']=target in lines
+                      if suffix=='.md5sums':
+                          values=[l.split()[0] for l in lines if len(l.split())==2 and '/'+l.split()[1].lstrip('/')==target]
+                          row['installed_record_target_md5']=[v for v in values if re.fullmatch('[0-9a-f]{32}',v)]
+                      if suffix=='.postinst':
+                          row['script_markers']={k:k.encode() in data for k in ('keytool','update-ca-certificates','cacerts')}
+                  result.append(row)
+              return result
+
+
+          def host_eligible():
+              return (os.name=='posix' and os.uname().sysname=='Linux' and os.geteuid()!=0
+                  and os.environ.get('GITHUB_REPOSITORY')=='THEFLOLZX/v.1'
+                  and os.environ.get('GITHUB_EVENT_NAME')=='workflow_dispatch'
+                  and os.environ.get('GITHUB_REF')=='refs/heads/main'
+                  and os.environ.get('GITHUB_WORKFLOW_REF')==WORKFLOW_REF
+                  and os.environ.get('GITHUB_RUN_NUMBER')=='1' and os.environ.get('GITHUB_RUN_ATTEMPT')=='1')
+
+
+          def main():
+              report=dict(schema='firstlight-cacerts-review.v1',stage='HOST_GUARD',status='NOT_RUN',
+                  prior_454_matches_reused_as_historical_evidence=True,prior_evidence_run=45002203016,
+                  prior_454_matches_reattested_this_run=False,downloads=0,secret_access=False,tools_executed=False,
+                  conclusion='C_UNRESOLVED',execution_authorized=False)
+              if not host_eligible():
+                  report.update(status='STOP',failure='HOST_GUARD');checkpoint(report);return 1
+              import resource
+              resource.setrlimit(resource.RLIMIT_CORE,(0,0));resource.setrlimit(resource.RLIMIT_AS,(536870912,536870912))
+              signal.signal(signal.SIGALRM,interrupted);signal.signal(signal.SIGTERM,interrupted);signal.alarm(95)
+              report.update(run_id=os.environ.get('GITHUB_RUN_ID'),image={key:os.environ.get(key) for key in ('ImageOS','ImageVersion','RUNNER_OS','RUNNER_ARCH')})
+              try:
+                  report['stage']='PINNED_FILE_RECHECK';budget=[0];matches={}
+                  for key,info in PINS.items():
+                      path=Path(info['path'])
+                      if file_hash(path,budget)!=info['sha256']:raise ReviewError('IDENTITY_CHANGED')
+                      matches[key]=True
+                  report['pinned_file_matches']=matches;checkpoint(report)
+                  for name,action in (
+                      ('CACERTS_LINK',lambda:inspect_link(JDK/'lib/security/cacerts',ALLOWED_TARGETS)),
+                      ('JAVA_SECURITY',lambda:provider_configuration(bounded_file(JDK/'conf/security/java.security',131072))),
+                      ('JAR_METADATA',lambda:jar_metadata(SDK/'lib/apksigner.jar'))):
+                      report['stage']=name
+                      try:report[name.lower()]=action()
+                      except (Exception,) as exc:
+                          code=getattr(exc,'code',None)
+                          if code=='INTERRUPTED':raise
+                          report[name.lower()+'_failure']=code if code in CODES else 'IO_REDACTED'
+                      checkpoint(report)
+                  if 'cacerts_link' in report:
+                      report['stage']='INSTALLED_DISTRIBUTION_RECORDS'
+                      try:report['distribution_records']=provenance(report['cacerts_link']['resolved_target'])
+                      except Exception as exc:
+                          code=getattr(exc,'code',None)
+                          if code=='INTERRUPTED':raise
+                          report['distribution_records_failure']=code if code in CODES else 'IO_REDACTED'
+                  report.update(stage='COMPLETE',status='DATA_COLLECTED_NOT_AUTHENTICATED',
+                      conclusion='C_UNRESOLVED',no_runtime_access_trace=True,full_runtime_gate_satisfied=False)
+                  checkpoint(report);return 0
+              except BaseException as exc:
+                  code=getattr(exc,'code',None)
+                  report.update(status='STOP',failure=code if code in CODES else 'IO_REDACTED');checkpoint(report);return 1
+              finally:signal.alarm(0)
+
+
+          if __name__=='__main__':raise SystemExit(main())
+          FIRSTLIGHT_CACERTS
+
