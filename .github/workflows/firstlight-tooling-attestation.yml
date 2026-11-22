@@ -20,6 +20,12 @@ jobs:
           import hashlib
           import json
           import os
+          from pathlib import Path
+          import platform
+          import re
+          import signal
+          import stat
+          import zipfile
           FAILURES = frozenset('''TOOLCHAIN_NOT_REVIEWED TOOLCHAIN_IDENTITY_MISMATCH
           TOOLCHAIN_LAYOUT TOOLCHAIN_LIMIT SIGNATURE_REJECTED SIGNATURE_OUTPUT_REJECTED
           STATIC_BRANCH_REJECTED CONTENT_IDENTITY_MISMATCH'''.split())
@@ -57,13 +63,6 @@ jobs:
                       else:raise VerificationError('TOOLCHAIN_LAYOUT')
                       digest.update(json.dumps(record,ensure_ascii=True,separators=(',',':')).encode()+b'\n')
               return digest.hexdigest()
-          import platform
-          import re
-          import signal
-          import stat
-          import zipfile
-          from integrations.firstlight.execution.signature_base_verification import (
-              file_hash, jdk_tree_hash, VerificationError, FAILURES)
 
           SDK=Path('/usr/local/lib/android/sdk/build-tools/36.1.0')
           WORKFLOW_REF='THEFLOLZX/v.1/.github/workflows/firstlight-tooling-attestation.yml@refs/heads/main'
@@ -228,4 +227,3 @@ jobs:
 
           if __name__=='__main__':raise SystemExit(main())
           FIRSTLIGHT_TOOLING
-
