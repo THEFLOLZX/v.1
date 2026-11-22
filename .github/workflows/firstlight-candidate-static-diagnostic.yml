@@ -4,7 +4,7 @@ on:
 permissions: {}
 jobs:
   inspect:
-    if: github.repository == 'THEFLOLZX/v.1' && github.run_number == 1 && github.run_attempt == 1
+    if: github.repository == 'THEFLOLZX/v.1' && github.run_number == 2 && github.run_attempt == 1
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
@@ -25,10 +25,50 @@ jobs:
           import json
           import os
           import platform
-          import resource
           import signal
           import ssl
           import zipfile
+          import struct
+
+          AUTHORIZED_RUN_NUMBER = '2'  # Same workflow path; run1 consumed. NOT authorization to dispatch.
+
+          STAGE_FAILURE_CODES = {
+              'INSPECTOR_SOURCE_LOAD': 'INSPECTOR_SOURCE_REJECTED',
+              'CLAIMS_PARSER_SOURCE_LOAD': 'CLAIMS_SOURCE_REJECTED',
+              'ZIP_STRUCTURE_AND_MEMBER_HASHES': 'ZIP_INSPECTION_FAILED',
+              'BINARY_MANIFEST_PARSE': 'MANIFEST_PARSE_FAILED',
+              'BUNDLED_FINGERPRINT_PARSE': 'FINGERPRINT_PARSE_FAILED',
+              'APK_SIGNING_BLOCK_PARSE': 'SIGNING_BLOCK_PARSE_FAILED',
+              'ARM64_LIBG_COMPARISON': 'LIBG_COMPARISON_FAILED',
+              'RESULTS_ASSEMBLY': 'RESULTS_ASSEMBLY_FAILED',
+          }
+
+
+          def exception_category(exc):
+              # Fixed labels only. Never use str/repr(exc), __name__ or traceback data.
+              for kind, label in ((MemoryError, 'MemoryError'), (zipfile.BadZipFile, 'BadZipFile'),
+                      (UnicodeError, 'UnicodeError'), (struct.error, 'StructError'),
+                      (ValueError, 'ValueError'), (KeyError, 'KeyError'), (TypeError, 'TypeError'),
+                      (TimeoutError, 'TimeoutError'), (OSError, 'OSError')):
+                  if isinstance(exc, kind):return label
+              return 'OTHER_REDACTED'
+
+
+          class DiagnosticFailure(Exception):
+              pass
+
+
+          def stage_call(report, stage, operation):
+              code = STAGE_FAILURE_CODES[stage]  # All callers supply project-owned constants.
+              report['stage'] = stage
+              try:
+                  result = operation()
+              except BaseException as exc:
+                  report['failure_code'] = code
+                  report['exception_type'] = exception_category(exc)
+                  raise DiagnosticFailure() from None
+              report.setdefault('completed_stages', []).append(stage)
+              return result
 
           CANDIDATE_SHA256 = 'da4fdba452a552aaf5843f595bdb383bc313cb097d719b2e103b383ee5fcf00e'
           ORIGINAL_SHA256 = '685c115ee432d5fd2d7be856a58ea0cb029c9c187aa9061f3cd250994dfbcf2a'
@@ -57,48 +97,89 @@ jobs:
                   raise ValueError('Exact observed candidate required')
 
 
-          def inspect_candidate(path, transfer):
+          def inspect_candidate(path, transfer, report):
               require_candidate(transfer)  # BEFORE either parser receives any APK bytes.
-              inspector = reviewed_source(INSPECTOR_B64, INSPECTOR_SHA256)
-              claims = reviewed_source(CLAIMS_B64, CLAIMS_SHA256)
-              with path.open('rb') as stream:
-                  inventory = inspector['inspect_stream'](stream, path.stat().st_size)
-              if inventory['whole_sha256'] != CANDIDATE_SHA256:raise ValueError('Candidate changed during inspection')
-              rows = {r['name']: r for r in inventory['entries']}
-              manifest = rows.get('AndroidManifest.xml')
-              if not manifest or manifest['bytes'] > 2_000_000:raise ValueError('Manifest missing/oversized')
-              with zipfile.ZipFile(path) as archive:
-                  metadata = claims['manifest_claims'](archive.read('AndroidManifest.xml'))
-                  central = archive.start_dir
-                  version = None
+              findings = report.setdefault('findings', {})
+              inspector = stage_call(report, 'INSPECTOR_SOURCE_LOAD',
+                  lambda: reviewed_source(INSPECTOR_B64, INSPECTOR_SHA256))
+              claims = stage_call(report, 'CLAIMS_PARSER_SOURCE_LOAD',
+                  lambda: reviewed_source(CLAIMS_B64, CLAIMS_SHA256))
+
+              def zip_inventory():
+                  with path.open('rb') as stream:
+                      result = inspector['inspect_stream'](stream, path.stat().st_size)
+                  if result['whole_sha256'] != CANDIDATE_SHA256:raise ValueError('Candidate changed')
+                  rows = {r['name']: r for r in result['entries']}
+                  findings.update(zip_crc_and_bounded_inventory='PASS', member_count=result['entry_count'],
+                      decompressed_bytes=result['uncompressed_bytes'])
+                  return result, rows
+              inventory, rows = stage_call(report, 'ZIP_STRUCTURE_AND_MEMBER_HASHES', zip_inventory)
+
+              def manifest_parse():
+                  manifest = rows.get('AndroidManifest.xml')
+                  if not manifest or manifest['bytes'] > 2_000_000:raise ValueError('Manifest bound')
+                  with zipfile.ZipFile(path) as archive:
+                      metadata = claims['manifest_claims'](archive.read('AndroidManifest.xml'))
+                  findings.update(manifest=metadata, package_version_claims_match=(
+                      metadata['package']=='nullsroyale.rel.free' and metadata['version_name']=='15.535.13'
+                      and metadata['version_code']==150535013))
+              stage_call(report, 'BINARY_MANIFEST_PARSE', manifest_parse)
+
+              def fingerprint_parse():
+                  value = None
                   if 'assets/fingerprint.json' in rows:
-                      if rows['assets/fingerprint.json']['bytes'] > 2_000_000:raise ValueError('Fingerprint oversized')
-                      observed = json.loads(archive.read('assets/fingerprint.json')).get('version')
+                      if rows['assets/fingerprint.json']['bytes'] > 2_000_000:raise ValueError('Fingerprint bound')
+                      with zipfile.ZipFile(path) as archive:
+                          observed = json.loads(archive.read('assets/fingerprint.json'))
+                      if not isinstance(observed, dict):raise ValueError('Fingerprint object required')
+                      value = observed.get('version')
                       import re
-                      if isinstance(observed, str) and re.fullmatch(r'[0-9.]{1,40}', observed):version = observed
-              with path.open('rb') as stream:
-                  certificates = claims['v2_certificate_claims'](stream, central)
-              libg = rows.get('lib/arm64-v8a/libg.so', {})
-              headers = [row['format_header'] for row in rows.values() if 'format_header' in row]
-              dex_anomalies = sum(any(h.get(k) is not True for k in ('magic_valid','file_size_matches',
-                  'supported_header','checksum_matches','signature_sha1_matches')) for h in headers if h['format']=='DEX-header')
-              library_hashes = sorted(row['sha256'] for row in rows.values() if row['name'].startswith('lib/arm64-v8a/') and row['name'].endswith('.so'))
-              # No dynamic member names, server data, certificate text or secret URLs in logs.
-              member_digest = hashlib.sha256(json.dumps([(row['name'],row['bytes'],row['sha256'])
-                  for row in sorted(rows.values(),key=lambda row:row['name'])],separators=(',',':')).encode()).hexdigest()
-              cert_claims = certificates['v2_certificate_claims']
-              return dict(zip_crc_and_bounded_inventory='PASS', member_count=inventory['entry_count'],
+                      if value is not None and (not isinstance(value, str) or not re.fullmatch(r'[0-9.]{1,40}', value)):
+                          raise ValueError('Unsupported fingerprint version')
+                  findings.update(bundled_fingerprint_present='assets/fingerprint.json' in rows,
+                      bundled_fingerprint_version_claim=value,
+                      bundled_content={name:dict(bytes=rows[name]['bytes'],sha256=rows[name]['sha256'])
+                          for name in ('assets/fingerprint.json','assets/assets.scdb') if name in rows},
+                      complete_15_535_86_verified=False)
+                  return value
+              version = stage_call(report, 'BUNDLED_FINGERPRINT_PARSE', fingerprint_parse)
+
+              def signing_parse():
+                  with zipfile.ZipFile(path) as archive:central = archive.start_dir
+                  with path.open('rb') as stream:certificates = claims['v2_certificate_claims'](stream, central)
+                  findings.update(certificate_claims=certificates, signing_block_inventory=inventory['signing_block'],
+                      matches_community_certificate_claim_only=any(c['chain_index']==0 and c['certificate_der_sha256']==COMMUNITY_CERT_SHA256
+                          for c in certificates['v2_certificate_claims']),
+                      signature_crypto_verified=False, publisher_authenticated=False,
+                      trusted_publisher_certificate_anchor=TRUSTED_PUBLISHER_CERT_SHA256)
+              stage_call(report, 'APK_SIGNING_BLOCK_PARSE', signing_parse)
+
+              def libg_compare():
+                  libg = rows.get('lib/arm64-v8a/libg.so')
+                  findings['arm64_libg_present'] = libg is not None
+                  if libg is None:raise ValueError('Missing required library')
+                  header = libg.get('format_header', {})
+                  findings.update(arm64_libg_sha256=libg['sha256'], arm64_libg_matches_pin=libg['sha256']==LIBG_SHA256,
+                      libg_elf_header=header)
+                  if not all(header.get(k) is True for k in ('elf64_little_endian','aarch64','shared_object')):
+                      raise ValueError('Unsupported ELF header')
+                  if libg['sha256'] != LIBG_SHA256:raise ValueError('Native library mismatch')
+              stage_call(report, 'ARM64_LIBG_COMPARISON', libg_compare)
+
+              def assemble():
+                  headers = [row['format_header'] for row in rows.values() if 'format_header' in row]
+                  dex_anomalies = sum(any(h.get(k) is not True for k in ('magic_valid','file_size_matches',
+                      'supported_header','checksum_matches','signature_sha1_matches')) for h in headers if h['format']=='DEX-header')
+                  library_hashes = sorted(row['sha256'] for row in rows.values() if row['name'].startswith('lib/arm64-v8a/') and row['name'].endswith('.so'))
+                  # No dynamic names/server data/certificate text/secret URLs in output.
+                  member_digest = hashlib.sha256(json.dumps([(row['name'],row['bytes'],row['sha256'])
+                      for row in sorted(rows.values(),key=lambda row:row['name'])],separators=(',',':')).encode()).hexdigest()
+                  findings.update(zip_crc_and_bounded_inventory='PASS', member_count=inventory['entry_count'],
                   decompressed_bytes=inventory['uncompressed_bytes'], member_inventory_digest=member_digest,
                   member_inventory_digest_method='SHA256(canonical JSON sorted name/size/member-SHA256 tuples); not an upstream signature',
-                  trusted_reference_member_inventory_available=False, manifest=metadata,
-                  package_version_claims_match=(metadata['package']=='nullsroyale.rel.free'
-                      and metadata['version_name']=='15.535.13' and metadata['version_code']==150535013),
-                  arm64_libg_sha256=libg.get('sha256'), arm64_libg_matches_pin=libg.get('sha256')==LIBG_SHA256,
-                  libg_elf_header=libg.get('format_header'), arm64_library_count=len(library_hashes),
+                  trusted_reference_member_inventory_available=False, arm64_library_count=len(library_hashes),
                   arm64_library_hashes=library_hashes, dex_header_anomaly_count=dex_anomalies,
                   unexpected_executable_member_count=len(inventory['unexpected_executable_suffixes']),
-                  signing_block_inventory=inventory['signing_block'], certificate_claims=certificates,
-                  matches_community_certificate_claim_only=any(c['chain_index']==0 and c['certificate_der_sha256']==COMMUNITY_CERT_SHA256 for c in cert_claims),
                   trusted_publisher_certificate_anchor=TRUSTED_PUBLISHER_CERT_SHA256,
                   signature_crypto_verified=False, publisher_authenticated=False,
                   bundled_content={name:dict(bytes=rows[name]['bytes'],sha256=rows[name]['sha256'])
@@ -106,6 +187,16 @@ jobs:
                   bundled_csv_logic_member_count=sum(row['name'].startswith('assets/csv_logic/') for row in rows.values()),
                   bundled_fingerprint_version_claim=version, complete_15_535_86_verified=False,
                   signing_variant_explanation='UNPROVEN_WITHOUT_AUTHENTICATED_REFERENCE_ARCHIVE_OR_COMPLETE_INVENTORY')
+              stage_call(report, 'RESULTS_ASSEMBLY', assemble)
+              return findings
+
+
+          def host_eligible():
+              return (platform.system()=='Linux' and os.geteuid()!=0
+                  and os.environ.get('GITHUB_REPOSITORY')=='THEFLOLZX/v.1'
+                  and os.environ.get('GITHUB_EVENT_NAME')=='workflow_dispatch'
+                  and os.environ.get('GITHUB_RUN_NUMBER')==AUTHORIZED_RUN_NUMBER
+                  and os.environ.get('GITHUB_RUN_ATTEMPT')=='1')
 
 
           def main():
@@ -115,14 +206,11 @@ jobs:
                   execution_authorized=False, build_authorized=False, training_eligible=False,
                   signature_crypto_verified=False, publisher_authenticated=False, retry=False,
                   run_id=os.environ.get('GITHUB_RUN_ID'), cleanup=False)
-              created = False;transport = None
+              created = False;transport = None;alarms_configured = False
               try:
                   report['stage']='HOST_GUARD'
-                  if (platform.system()!='Linux' or os.geteuid()==0
-                          or os.environ.get('GITHUB_REPOSITORY')!='THEFLOLZX/v.1'
-                          or os.environ.get('GITHUB_EVENT_NAME')!='workflow_dispatch'
-                          or os.environ.get('GITHUB_RUN_NUMBER')!='1' or os.environ.get('GITHUB_RUN_ATTEMPT')!='1'):
-                      raise ValueError('One new diagnostic job only')
+                  if not host_eligible():raise ValueError('One new diagnostic job only')
+                  import resource  # Linux job only. Tests replace it; never change local limits.
                   resource.setrlimit(resource.RLIMIT_CORE,(0,0))
                   resource.setrlimit(resource.RLIMIT_FSIZE,(1_100_000_000,1_100_000_000))
                   resource.setrlimit(resource.RLIMIT_AS,(1_500_000_000,1_500_000_000))
@@ -133,6 +221,7 @@ jobs:
                   key = transport['secret_share_key'](os.environ.pop('FIRSTLIGHT_ICLOUD_SHARE_URL',''))
                   for sig in (signal.SIGALRM,signal.SIGTERM,signal.SIGINT):
                       signal.signal(sig,transport['interrupted'])
+                  alarms_configured = True
                   path = transport['scratch']();path.mkdir(mode=0o700);created=True
                   (path/'.owner').write_text(os.environ['GITHUB_RUN_ID'])
                   if transport['shutil'].disk_usage(path).free < 4_000_000_000:raise ValueError('Storage low')
@@ -154,17 +243,23 @@ jobs:
                   require_candidate(transfer)
                   report['diagnostic_candidate_hash_match']=True
                   url=key=None;signal.alarm(100)
-                  report['stage']='STATIC_FORMAT_INSPECTION'
-                  report['findings']=inspect_candidate(candidate,transfer)
+                  inspect_candidate(candidate,transfer,report)
                   report['status']='STATIC_DIAGNOSTIC_COMPLETE_NOT_AUTHENTICATED'
                   report['stage']='COMPLETE'
-              except BaseException:
+              except BaseException as exc:
+                  # An inner stage already records its fixed failure code. Pre-parser errors
+                  # get one generic code; neither path emits exception messages.
+                  report.setdefault('failure_code','PRE_INSPECTION_FAILED')
+                  report.setdefault('exception_type',exception_category(exc))
                   report['status']='STATIC_DIAGNOSTIC_FAILED_DETAILS_REDACTED'
               finally:
-                  signal.alarm(0)
+                  if alarms_configured:signal.alarm(0)
                   if created and transport:
                       try:transport['cleanup']();report['cleanup']=True
-                      except BaseException:report['status']='CLEANUP_FAILED'
+                      except BaseException as exc:
+                          report['status']='CLEANUP_FAILED'
+                          report['cleanup_failure_code']='SCRATCH_CLEANUP_FAILED'
+                          report['cleanup_exception_type']=exception_category(exc)
                   print(json.dumps(report,sort_keys=True))
               return 0 if report['status']=='STATIC_DIAGNOSTIC_COMPLETE_NOT_AUTHENTICATED' else 1
 
